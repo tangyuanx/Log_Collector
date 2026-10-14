@@ -17,7 +17,7 @@ class SessionTests(unittest.TestCase):
             path.write_bytes(b'')
             process = SimpleNamespace(open_files=lambda: [SimpleNamespace(path=str(path))])
             with patch('session.validate'), patch('session.psutil.Process', return_value=process) as lookup:
-                self.assertEqual(discover_logs(self.session), path)
+                self.assertEqual(discover_logs(self.session), path.resolve())
                 lookup.assert_called_once_with(10)
 
     def test_multiple_logs_are_not_guessed(self):
@@ -42,7 +42,7 @@ class SessionTests(unittest.TestCase):
             paths = [Path(d) / name for name in ('session.log', 'debug.log', 'event_log.txt', 'settings.ini')]
             for path in paths:
                 path.write_bytes(b'')
-            self.assertEqual(log_candidates(paths + [paths[0]]), [paths[0]])
+            self.assertEqual(log_candidates(paths + [paths[0]]), [paths[0].resolve()])
 
     def test_recycled_pid_invalidates_binding(self):
         class Native:
