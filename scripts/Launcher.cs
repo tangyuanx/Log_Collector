@@ -27,7 +27,7 @@ internal static class Launcher {
     [STAThread] static int Main(string[] args) {
         string local=Environment.GetEnvironmentVariable("LOCALAPPDATA");
         if(String.IsNullOrEmpty(local)) local=Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        string root=Path.Combine(local,"LogCollector");
+        string root=Path.GetFullPath(Path.Combine(local,"LogCollector"));
         string runtime="";
         try {
             byte[] payload;
@@ -48,14 +48,15 @@ internal static class Launcher {
                         File.Exists(Path.Combine(runtime,"_internal","PySide6","plugins","platforms","qwindows.dll"));
                     if(!ready) {
                         if(Directory.Exists(runtime)) Directory.Delete(runtime,true);
-                        string staging=runtime+"-"+Guid.NewGuid().ToString("N").Substring(0,8);
+                        string staging=Path.GetFullPath(runtime+"-"+Guid.NewGuid().ToString("N").Substring(0,8));
                         try {
                             Directory.CreateDirectory(staging);
                             using(var memory=new MemoryStream(payload))
                             using(var zip=new ZipArchive(memory,ZipArchiveMode.Read)) {
                                 foreach(var entry in zip.Entries) {
-                                    string target=Path.GetFullPath(Path.Combine(staging,entry.FullName));
-                                    if(!target.StartsWith(staging+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase)) throw new IOException("运行包路径无效");
+                                    string prefix=Path.GetFullPath(staging).TrimEnd(Path.DirectorySeparatorChar)+Path.DirectorySeparatorChar;
+                                    string target=Path.GetFullPath(Path.Combine(prefix,entry.FullName));
+                                    if(!target.StartsWith(prefix,StringComparison.OrdinalIgnoreCase)) throw new IOException("运行包路径无效："+entry.FullName);
                                     if(entry.FullName.EndsWith("/")) { Directory.CreateDirectory(target); continue; }
                                     Directory.CreateDirectory(Path.GetDirectoryName(target));
                                     entry.ExtractToFile(target);
