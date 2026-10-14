@@ -101,4 +101,41 @@ class WindowTests(unittest.TestCase):
         self.assertIsNotNone(self.window.worker)
         self.assertFalse(self.window.pickbtn.isEnabled())
         self.wait_job()
-        self.assertIn('最新版本', self.window.status.text())
+        self.assertIn('最新版本', self.window.update_dialog.message.text())
+
+    def test_version_dialog_check_new_release_and_failure(self):
+        before = self.window.status.text()
+        info = {'version': 'v9.0.0', 'size': 1048576}
+        with patch('app.check_update', return_value=info):
+            self.window.check_for_updates()
+            self.assertTrue(self.window.update_dialog.isVisible())
+            self.assertTrue(self.window.update_dialog.busy)
+            self.wait_job()
+        dialog = self.window.update_dialog
+        self.assertFalse(dialog.busy)
+        self.assertTrue(dialog.upgrade.isVisible())
+        self.assertIn('v9.0.0', dialog.message.text())
+        self.assertEqual(before, self.window.status.text())
+        self.window.update_checked(None, '网络错误')
+        self.assertFalse(dialog.upgrade.isVisible())
+        self.assertIn('网络错误', dialog.message.text())
+        dialog.reject()
+
+    def test_update_progress_worker_and_retry_on_error(self):
+        self.window.update_dialog.info = {'version': 'v9.0.0', 'size': 1048576}
+        self.window.update_dialog.open()
+        def download(info, progress):
+            progress(524288, 1048576, '下载中')
+            raise RuntimeError('下载中断')
+        with patch('app.download_and_install', side_effect=download):
+            self.window.install_update()
+            self.window.update_dialog.reject()
+            self.assertTrue(self.window.update_dialog.isVisible())
+            self.wait_job()
+        dialog = self.window.update_dialog
+        self.assertEqual(dialog.progress.value(), 50)
+        self.assertEqual(dialog.detail.text(), '0.5 / 1.0 MB')
+        self.assertIn('下载中断', dialog.message.text())
+        self.assertTrue(dialog.upgrade.isEnabled())
+        self.assertTrue(self.window.pickbtn.isEnabled())
+        dialog.reject()

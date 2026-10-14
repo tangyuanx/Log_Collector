@@ -22,9 +22,6 @@ def system_runtime(entry):
 
 a.binaries = [entry for entry in a.binaries if not system_runtime(entry)]
 pyz = PYZ(a.pure)
-single = EXE(pyz, a.scripts, a.binaries, a.datas, [], name='LogCollector',
-             debug=False, bootloader_ignore_signals=False, strip=False,
-             upx=False, console=False, disable_windowed_traceback=False, icon='assets/icon.ico')
 folder_exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='LogCollector',
                  debug=False, bootloader_ignore_signals=False, strip=False,
                  upx=False, console=False, disable_windowed_traceback=False, icon='assets/icon.ico')

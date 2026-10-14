@@ -8,7 +8,7 @@ from pathlib import Path
 from PySide6.QtCore import QThread, QTimer, Qt, Signal, QUrl
 from PySide6.QtGui import QDesktopServices, QFont, QIcon
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QFileDialog, QMessageBox, QFrame, QDialog, QStyle, QSizeGrip)
+    QLabel, QPushButton, QFileDialog, QMessageBox, QFrame, QDialog, QStyle, QSizeGrip, QProgressBar)
 from capture import FileCapture
 from session import bind_cursor, discover_logs, validate
 from update import VERSION, check_update, download_and_install
@@ -18,6 +18,7 @@ ICON_PATH = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent)) / 'a
 
 
 class Worker(QThread):
+    progress = Signal(object, object, str)
     def __init__(self, function, parent):
         super().__init__(parent)
         self.function = function
@@ -28,6 +29,76 @@ class Worker(QThread):
             self.result = (self.function(), '')
         except Exception as exc:
             self.result = (None, str(exc))
+
+
+class UpdateDialog(QDialog):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.busy = False
+        self.info = None
+        self.setWindowTitle('版本与更新')
+        self.setMinimumWidth(440)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+        self.version = QLabel('当前版本  v' + VERSION)
+        self.version.setObjectName('brand')
+        layout.addWidget(self.version)
+        self.message = QLabel('正在检查新版本…')
+        self.message.setTextFormat(Qt.PlainText)
+        self.message.setWordWrap(True)
+        layout.addWidget(self.message)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.hide()
+        layout.addWidget(self.progress)
+        self.detail = QLabel()
+        self.detail.setObjectName('secondary')
+        self.detail.hide()
+        layout.addWidget(self.detail)
+        row = QHBoxLayout()
+        row.addStretch()
+        self.check = QPushButton('重新检查')
+        self.check.clicked.connect(parent.check_for_updates)
+        row.addWidget(self.check)
+        self.upgrade = QPushButton('升级并重启')
+        self.upgrade.setObjectName('primary')
+        self.upgrade.clicked.connect(parent.install_update)
+        self.upgrade.hide()
+        row.addWidget(self.upgrade)
+        self.closebtn = QPushButton('关闭')
+        self.closebtn.clicked.connect(self.reject)
+        row.addWidget(self.closebtn)
+        layout.addLayout(row)
+
+    def set_busy(self, busy):
+        self.busy = busy
+        self.check.setEnabled(not busy)
+        self.upgrade.setEnabled(not busy)
+        self.closebtn.setEnabled(not busy)
+
+    def reject(self):
+        if not self.busy:
+            super().reject()
+
+    def closeEvent(self, event):
+        if self.busy:
+            event.ignore()
+        else:
+            super().closeEvent(event)
+
+    def download_progress(self, done, total, stage):
+        self.message.setText(stage + '，请稍候…')
+        self.progress.show()
+        self.detail.show()
+        if total:
+            self.progress.setRange(0, 100)
+            self.progress.setValue(min(100, int(done * 100 / total)))
+            self.detail.setText(f'{done / 1048576:.1f} / {total / 1048576:.1f} MB')
+        else:
+            self.progress.setRange(0, 0)
+            self.detail.setText(f'已下载 {done / 1048576:.1f} MB')
 
 
 class PickButton(QPushButton):
@@ -125,7 +196,8 @@ class Window(QMainWindow):
         en.setAttribute(Qt.WA_TransparentForMouseEvents)
         header_row.addWidget(en)
         header_row.addStretch()
-        self.updatebtn = QPushButton('检查更新')
+        self.updatebtn = QPushButton('v' + VERSION)
+        self.updatebtn.setToolTip('查看版本并检查更新')
         self.updatebtn.setObjectName('updateButton')
         self.updatebtn.clicked.connect(self.check_for_updates)
         header_row.addWidget(self.updatebtn)
@@ -211,6 +283,7 @@ class Window(QMainWindow):
         self.retrybtn.clicked.connect(self.retry_logs)
         self.retrybtn.hide()
         root.addWidget(self.retrybtn, alignment=Qt.AlignLeft)
+        self.update_dialog = UpdateDialog(self)
         self.help_dialog = QDialog(self)
         self.help_dialog.setWindowTitle('使用帮助')
         self.help_dialog.resize(480, 360)
@@ -311,11 +384,13 @@ class Window(QMainWindow):
         self.actionbtn.setEnabled(active or (not busy and self.session is not None and self.source is not None))
         self.actionbtn.setText('停止并保存' if active else '开始采集')
 
-    def run_job(self, function, callback):
+    def run_job(self, function, callback, progress_callback=None):
         if self.worker is not None:
             return
         self.worker = Worker(function, self)
         self.job_callback = callback
+        if progress_callback is not None:
+            self.worker.progress.connect(progress_callback)
         self.worker.finished.connect(self.job_finished)
         self.refresh_controls()
         self.worker.start()
@@ -449,22 +524,47 @@ class Window(QMainWindow):
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.last_file)))
 
     def check_for_updates(self):
-        self.status.setText('正在检查更新…')
+        dialog = self.update_dialog
+        if self.worker is not None or self.capture.active:
+            return
+        dialog.open()
+        dialog.info = None
+        dialog.progress.hide()
+        dialog.detail.hide()
+        dialog.upgrade.hide()
+        dialog.message.setText('正在检查新版本…')
+        dialog.set_busy(True)
         self.run_job(check_update, self.update_checked)
 
     def update_checked(self, info, error):
+        dialog = self.update_dialog
+        dialog.set_busy(False)
+        dialog.info = info if not error else None
+        dialog.upgrade.setVisible(info is not None and not error)
         if error:
-            self.status.setText('检查更新失败：' + error)
+            dialog.message.setText('检查失败，可重新检查：' + error)
         elif info is None:
-            self.status.setText('当前已经是最新版本')
-        elif QMessageBox.question(self, '发现新版本', f"发现 {info['version']}，立即下载并更新吗？") == QMessageBox.Yes:
-            self.status.setText('正在下载更新…')
-            self.run_job(lambda: download_and_install(info), self.update_installed)
+            dialog.message.setText('当前已是最新版本。')
+        else:
+            dialog.message.setText(f"发现新版本 {info['version']}。点击升级后将下载、校验并自动重启。")
+
+    def install_update(self):
+        dialog = self.update_dialog
+        if not dialog.info or self.worker is not None or self.capture.active:
+            return
+        dialog.set_busy(True)
+        dialog.download_progress(0, dialog.info.get('size', 0), '下载中')
+        # Resolve the signal on the GUI thread; the worker retains it until finished.
+        self.run_job(lambda: download_and_install(dialog.info, self.worker.progress.emit),
+                     self.update_installed, dialog.download_progress)
 
     def update_installed(self, result, error):
+        dialog = self.update_dialog
+        dialog.set_busy(False)
         if error:
-            self.status.setText('更新失败：' + error)
+            dialog.message.setText('升级失败，可重试：' + error)
         else:
+            dialog.message.setText('校验完成，正在重启…')
             QApplication.quit()
 
     def closeEvent(self, event):
@@ -511,6 +611,9 @@ def main():
                 'help_at_top': window.helpbtn.parentWidget() is window.header,
                 'update_at_top': window.updatebtn.parentWidget() is window.header,
                 'icon_loaded': not window.windowIcon().isNull(),
+                'version_button': window.updatebtn.text(),
+                'runtime_path': str(getattr(sys, '_MEIPASS', '')),
+                'launcher_path': os.environ.get('LOGCOLLECTOR_LAUNCHER', ''),
                 'border_pixel': window.grab().toImage().pixelColor(0, 0).name()}), encoding='utf-8')
             app.quit()
         QTimer.singleShot(300, confirm_startup)
