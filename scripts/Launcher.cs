@@ -25,7 +25,9 @@ internal static class Launcher {
         result.Append('\\',slashes*2); return result.Append('"').ToString();
     }
     [STAThread] static int Main(string[] args) {
-        string root=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"LogCollector");
+        string local=Environment.GetEnvironmentVariable("LOCALAPPDATA");
+        if(String.IsNullOrEmpty(local)) local=Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        string root=Path.Combine(local,"LogCollector");
         string runtime="";
         try {
             byte[] payload;

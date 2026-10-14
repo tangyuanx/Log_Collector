@@ -87,8 +87,8 @@ with tempfile.TemporaryDirectory(prefix='logcollector-verify-') as tmp:
         if label.startswith('launcher-'):
             if not result.get('launcher_path') or '_MEI' in result.get('runtime_path', ''):
                 raise RuntimeError('Launcher still depends on temporary runtime: ' + label)
-            if str(Path(env['LOCALAPPDATA']) / 'LogCollector' / 'runtime').casefold() not in result['runtime_path'].casefold():
-                raise RuntimeError('Runtime was not installed in user cache: ' + label)
+            if not Path(result['runtime_path']).resolve().is_relative_to((Path(env['LOCALAPPDATA']) / 'LogCollector' / 'runtime').resolve()):
+                raise RuntimeError('Runtime was not installed in user cache: ' + label + ' ' + json.dumps(result))
         results.append({'case': label, **result})
 
 Path('dist/startup-verification.json').write_text(json.dumps(results, indent=2), encoding='utf-8')
