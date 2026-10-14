@@ -1,20 +1,31 @@
 # Log Collector
 
-Lightweight Windows log capture companion for MobaXterm, v0.1.0.
+Windows 上的 MobaXterm 会话日志采集工具，v0.1.1。
 
-## How it works
+## 使用
 
-1. In MobaXterm enable terminal logging for the session and verify its log file **is updating**.
-2. Open Log Collector. Select the source log file corresponding to your target session (or browse the log folder).
-3. Give the session a recognisable label (IP + tab/session name is recommended).
-4. Click **Start**. The collector remembers the current end-of-file byte offset. Old data is excluded.
-5. Click **Stop**. The newly appended bytes are saved as a separate `.log` file.
+1. 首次使用，在 MobaXterm 的 **Settings → Configuration → Terminal** 中开启 **Log terminal output to the following directory**，选择保存目录，并重新连接目标会话。如果该会话设置覆盖了全局设置，也需要在该会话的 Terminal settings 中开启日志。
+2. 打开 Log Collector，按住 **按住拖到终端**，拖到要采集的会话文字区域，松开绑定。
+3. 目标显示“准备就绪”后，点击 **开始采集**。
+4. 点击 **停止并保存**。日志默认存到用户文档下的 `LogCollector` 目录，可更改保存位置。
 
-The capture is byte-exact and works with SSH and serial sessions **as long as MobaXterm writes them to a file**. The app does not use screen scraping or read terminal history. It cannot capture bytes that MobaXterm has not flushed to the source log. Do not treat identical IPs as unambiguous session identifiers: bind the exact file for each session.
+主界面只保留目标会话、开始/停止按钮和保存位置。无需在工具中选择原始日志目录、日志文件或输入会话名称。“检查更新”从 GitHub Releases 下载单文件 EXE，校验 SHA256 后替换并重启。
 
-The source log continues to grow in MobaXterm. This tool copies only the manually chosen interval. If the source file is replaced or truncated, the tool stops instead of silently mixing sessions. There is no automatic recovery from such events.
+## 采集方式与边界
 
-## Develop
+- 绑定 MobaXterm 的具体 MoTTY 终端窗口（CMoTTY/PuTTY），使用窗口句柄、进程创建时间和宿主身份校验。切换标签页不会重定向到当前显示的会话。
+- 从所选 MoTTY 进程打开的文件句柄中查找日志。只接受一个候选日志；不扫描共享 MobaXterm 进程、其他会话、保存的登录信息或任意日志目录。
+- 该适配器仍依赖 **MobaXterm 内置日志输出**，并不是从窗口画面直接获取完整输出。不使用 OCR、周期复制终端或抓取滚屏文字。
+- Windows 文件句柄枚举可能遗漏文件；一些 MobaXterm 版本/会话的日志也可能由共享宿主维护。此时会明确显示无法自动关联，而不是猜选其他会话。当前版本没有手动文件关联回退。
+- 开始时记录日志当前末尾，排除旧内容；停止时固定末尾边界，保存到单独日志文件。MobaXterm 尚未写入文件的缓冲内容不在采集范围内，日志可能包含终端控制字符。
+- 目标关闭、文件截断或替换时停止采集并保留已写入内容。目标权限较高时，应以相同权限启动工具。
+- 不持久化 HWND/PID；工具重新启动后重新绑定，避免句柄复用误绑。
+
+## 验证状态
+
+文件增量采集、停止边界、会话身份、候选日志歧义和 Qt 界面状态有自动测试。Windows 构建流程会运行同一套测试及 Win32 API 基础检查。尚未进行真实 MobaXterm 会话的端到端验证，自动日志关联仍需在实际 Windows 环境确认。
+
+## 开发与发布
 
 ```powershell
 py -m venv .venv
@@ -24,19 +35,6 @@ python -m unittest discover -s tests -v
 python app.py
 ```
 
-## Windows build
+每次推送 main，GitHub Actions 在 Windows 上测试并打包单文件 `LogCollector.exe`，上传构建产物。`update.py` 中的 VERSION 尚未发布时，流程创建同名版本标签并发布 EXE 与 `SHA256SUMS.txt`。已有版本的资产不会被覆盖。发布下一版时更新 VERSION 后推送 main。
 
-On every push to `main` and manual workflow run, GitHub Actions tests and packages the single-file `LogCollector.exe` as an Actions artifact.
-
-On the **first push to `main`**, GitHub Actions builds the executable, creates the matching tag `v0.1.0`, and publishes the EXE and checksum to GitHub Releases. For future releases, bump `VERSION` in `update.py` (e.g. `0.1.1`) and push `main` again. Existing release assets are deliberately not overwritten. If manually pushing a tag, it **must match `VERSION`**.
-
-To push an empty repository from Windows, open PowerShell in this folder and run `./publish.ps1` (requires Git and authorized GitHub login). Alternatively use standard `git init / git add / git commit / git push` commands. Both approaches trigger the same build and release pipeline. Repository Actions must be enabled and allow the workflow's `contents: write` token permission.
-
-The app checks for updates *only when clicked*. It verifies the downloaded SHA256 checksum. Updating replaces the current EXE after exit and leaves an `.exe.bak` backup. The EXE needs write permission to its installation directory; don't run it from a protected path like Program Files without an appropriate installer. Do not rename release assets. No update works in `python app.py` source mode.
-
-### Known limitations
-
-- Selecting the session is a manual log-file binding, not automatic introspection of MobaXterm tabs.
-- Log lines buffered inside MobaXterm may appear later than the start/stop click.
-- No Windows physical-machine or MobaXterm integration verification has yet been performed.
-- Prefer keeping the log storage on a local disk rather than a network share; truncation / file replacement detection on unusual file systems might differ.
+仓库 Actions 需要允许流程声明的 `contents: write`。EXE 应放在有写权限的目录，以便软件内升级。升级保留 `.exe.bak` 备份；源码运行模式不支持原地 EXE 更新。

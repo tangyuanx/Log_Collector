@@ -19,7 +19,7 @@ git add --all
 if ($LASTEXITCODE -ne 0) { throw 'git add failed' }
 git diff --cached --quiet
 if ($LASTEXITCODE -ne 0) {
-    git commit -m 'feat: initial Log Collector v0.1.0 with Windows CI and updater'
+    git commit -m 'feat: simplify Log Collector around MobaXterm session capture'
     if ($LASTEXITCODE -ne 0) { throw 'git commit failed (check Git identity)' }
 }
 git push -u origin main

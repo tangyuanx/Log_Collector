@@ -75,9 +75,13 @@ class FileCapture:
     def stop(self):
         if not self.active: return None
         try:
-            for _ in range(100000):
-                if self.poll() == 0: break
-            else: raise CaptureError('Source still streaming too fast to finish')
+            # Fix the boundary when Stop is clicked; a streaming source must
+            # not keep extending the capture while the tail is being drained.
+            end = os.fstat(self.src.fileno()).st_size
+            self.poll(limit=0)  # Validate replacement/truncation even with no tail.
+            while self.offset < end:
+                if self.poll(limit=min(1048576, end - self.offset)) == 0:
+                    raise CaptureError('Source changed before pending bytes could be saved')
             return self.target
         finally:
             self.abort()

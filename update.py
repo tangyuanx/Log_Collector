@@ -9,7 +9,7 @@ import urllib.request
 from pathlib import Path
 
 REPOSITORY = 'tangyuanx/Log_Collector'
-VERSION = '0.1.0'
+VERSION = '0.1.1'
 API = f'https://api.github.com/repos/{REPOSITORY}/releases/latest'
 
 def _request(url):
