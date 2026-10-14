@@ -335,6 +335,8 @@ class Window(QMainWindow):
             QPushButton#textButton:hover { color:#303030; background:#ededed; }
             QPushButton#updateButton { font-size:13px; padding:4px 7px; border-radius:4px; color:#626262; }
             QPushButton#windowControl { border:0; border-radius:0; padding:0; }
+            QProgressBar { border:1px solid #d8d8d8; border-radius:4px; background:#f5f5f5; text-align:center; min-height:22px; }
+            QProgressBar::chunk { background:#a6a6a6; border-radius:3px; }
             QLabel#help { color:#626262; background:#f5f5f5; padding:12px; border-radius:6px; }
         """)
         self.refresh_output_label()
