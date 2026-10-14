@@ -34,7 +34,7 @@ internal static class Launcher {
             using(var stream=Assembly.GetExecutingAssembly().GetManifestResourceStream("runtime.zip"))
             using(var memory=new MemoryStream()) { stream.CopyTo(memory); payload=memory.ToArray(); }
             string digest=Hash(payload);
-            runtime=Path.Combine(root,"runtime",digest);
+            runtime=Path.Combine(root,"runtime",digest.Substring(0,16));
             Directory.CreateDirectory(Path.GetDirectoryName(runtime));
             using(var mutex=new Mutex(false,"Local\\LogCollector-"+digest)) {
                 try { if(!mutex.WaitOne(60000)) throw new IOException("另一实例仍在准备运行文件，请稍后重试。"); }
@@ -48,7 +48,7 @@ internal static class Launcher {
                         File.Exists(Path.Combine(runtime,"_internal","PySide6","plugins","platforms","qwindows.dll"));
                     if(!ready) {
                         if(Directory.Exists(runtime)) Directory.Delete(runtime,true);
-                        string staging=runtime+"-"+Guid.NewGuid().ToString("N");
+                        string staging=runtime+"-"+Guid.NewGuid().ToString("N").Substring(0,8);
                         try {
                             Directory.CreateDirectory(staging);
                             using(var memory=new MemoryStream(payload))
@@ -82,6 +82,8 @@ internal static class Launcher {
         } catch(Exception ex) {
             string report=Path.Combine(root,"startup-error.txt");
             string details=DateTime.Now.ToString("s")+"\r\nWindows: "+Environment.OSVersion+"\r\n64 bit OS: "+Environment.Is64BitOperatingSystem+"\r\nRuntime: "+runtime+"\r\n"+ex;
+            var native=ex as System.ComponentModel.Win32Exception;
+            if(native!=null) details+="\r\nWin32 error code: "+native.NativeErrorCode;
             try { Directory.CreateDirectory(root); File.WriteAllText(report,details,Encoding.UTF8); } catch { report="（诊断文件无法写入）"; }
             if(args.Length==0 || args[0]!="--startup-check") MessageBox.Show("日志采集无法启动。\n\n"+ex.Message+"\n\n诊断文件："+report,"Log Collector · 启动诊断",MessageBoxButtons.OK,MessageBoxIcon.Error);
             return 1;

@@ -75,7 +75,7 @@ with tempfile.TemporaryDirectory(prefix='logcollector-verify-') as tmp:
             raise RuntimeError('Frozen executable did not start/exit: ' + label)
         if status != 0 or not report.is_file():
             diagnostic = Path(env['LOCALAPPDATA']) / 'LogCollector/startup-error.txt'
-            if diagnostic.exists(): print(diagnostic.read_text(encoding='utf-8-sig'))
+            if diagnostic.exists(): print(json.dumps(diagnostic.read_text(encoding='utf-8-sig'), ensure_ascii=True))
             raise RuntimeError(f'{label} failed to start: exit {status}, report exists={report.is_file()}')
         result = json.loads(report.read_text(encoding='utf-8'))
         if not all(result.get(key) for key in ('visible', 'help_at_top', 'update_at_top', 'icon_loaded')):

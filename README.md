@@ -31,7 +31,7 @@ Windows 上的 MobaXterm 会话日志采集工具，v0.1.4。
 
 支持 Windows 10/11 x64，不支持 Windows 7/8。依赖版本固定；由 Windows Server 2022 构建。显式打包应用所需的 VC DLL，排除构建机的 ucrtbase.dll / APISet 系统 DLL，使用系统本身的对应库。
 
-单文件 `LogCollector.exe` 改为原生 x64 .NET Framework 启动器（Windows 10/11 自带所需框架），内含完整目录版运行文件。首次运行解包至 `%LOCALAPPDATA%/LogCollector/runtime/<包的 SHA256>`，后续复用；关键运行文件缺失时重新提取。Python 和 Qt 从该固定目录加载，避免旧单文件包每次解压到 `%TEMP%/_MEI...` 的路径。它不会修改系统 DLL、关闭安全软件或要求安装 Python。
+单文件 `LogCollector.exe` 改为原生 x64 .NET Framework 启动器（Windows 10/11 自带所需框架），内含完整目录版运行文件。首次运行解包至 `%LOCALAPPDATA%/LogCollector/runtime/<包的 SHA256 前缀>`，后续复用；关键运行文件缺失时重新提取。Python 和 Qt 从该固定目录加载，避免旧单文件包每次解压到 `%TEMP%/_MEI...` 的路径。它不会修改系统 DLL、关闭安全软件或要求安装 Python。
 
 启动器在进入 Python 前检查运行库加载，异常写入 `%LOCALAPPDATA%/LogCollector/startup-error.txt` 并显示诊断位置。这改变了导致此前错误的临时解包方式；仅凭报错截图仍无法确定用户电脑上的确切缺失依赖或文件拦截原因，不能保证消除所有机器上的 DLL 错误。
 
