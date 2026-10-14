@@ -13,7 +13,7 @@ for name in ('vcruntime140.dll', 'vcruntime140_1.dll'):
     runtime_binaries.append((str(candidate), '.'))
 
 a = Analysis(['app.py'], pathex=[SPECPATH], binaries=runtime_binaries,
-             datas=[], hiddenimports=[], hookspath=[], hooksconfig={},
+             datas=[('assets/icon.png', 'assets')], hiddenimports=[], hookspath=[], hooksconfig={},
              runtime_hooks=[], excludes=[], noarchive=False)
 
 def system_runtime(entry):
@@ -24,9 +24,9 @@ a.binaries = [entry for entry in a.binaries if not system_runtime(entry)]
 pyz = PYZ(a.pure)
 single = EXE(pyz, a.scripts, a.binaries, a.datas, [], name='LogCollector',
              debug=False, bootloader_ignore_signals=False, strip=False,
-             upx=False, console=False, disable_windowed_traceback=False)
+             upx=False, console=False, disable_windowed_traceback=False, icon='assets/icon.ico')
 folder_exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='LogCollector',
                  debug=False, bootloader_ignore_signals=False, strip=False,
-                 upx=False, console=False, disable_windowed_traceback=False)
+                 upx=False, console=False, disable_windowed_traceback=False, icon='assets/icon.ico')
 folder = COLLECT(folder_exe, a.binaries, a.datas, strip=False, upx=False,
                  name='LogCollector-Portable')

@@ -63,6 +63,25 @@ class WindowTests(unittest.TestCase):
             self.assertTrue(self.window.pickbtn.isEnabled())
             self.assertEqual(self.window.actionbtn.text(), '开始采集')
 
+    def test_waiting_and_live_line_count_are_visible(self):
+        source = self.folder / 'session.log'
+        source.write_bytes(b'old\n')
+        with patch('app.validate'):
+            self.window.begin_capture(source, '')
+            self.assertIn('0 行日志', self.window.status.text())
+            self.assertIn('尚无新增日志', self.window.status.text())
+            with source.open('ab') as stream: stream.write(b'first\r\nsecond')
+            self.window.read_new_data()
+            self.assertIn('2 行日志', self.window.status.text())
+            self.assertIn('最近写入', self.window.status.text())
+            self.assertIn('末行写入中', self.window.status.text())
+            with source.open('ab') as stream: stream.write(b'\r\n')
+            self.window.read_new_data()
+            self.assertIn('2 行日志', self.window.status.text())
+            self.assertNotIn('末行写入中', self.window.status.text())
+            self.window.stop_capture()
+            self.assertIn('已保存 2 行日志', self.window.status.text())
+
     def test_closed_target_stops_and_preserves_saved_data(self):
         source = self.folder / 'session.log'
         source.write_bytes(b'old')

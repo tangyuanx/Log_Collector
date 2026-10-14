@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import pefile
 from pathlib import Path
 from PyInstaller.archive.readers import CArchiveReader
 
@@ -25,6 +26,12 @@ for name in names:
         raise RuntimeError('OS-specific runtime must not be redistributed: ' + name)
 if not any(name.endswith('/platforms/qwindows.dll') for name in names):
     raise RuntimeError('Windows Qt platform plugin missing')
+if 'assets/icon.png' not in names:
+    raise RuntimeError('Application icon asset missing from bundle')
+pe = pefile.PE(str(single))
+if not any(entry.id == pefile.RESOURCE_TYPE['RT_GROUP_ICON']
+           for entry in pe.DIRECTORY_ENTRY_RESOURCE.entries):
+    raise RuntimeError('Executable lacks Windows icon resource')
 
 results = []
 with tempfile.TemporaryDirectory(prefix='logcollector-verify-') as tmp:
@@ -59,8 +66,10 @@ with tempfile.TemporaryDirectory(prefix='logcollector-verify-') as tmp:
         if status != 0 or not report.is_file():
             raise RuntimeError(f'{label} failed to start: exit {status}, report exists={report.is_file()}')
         result = json.loads(report.read_text(encoding='utf-8'))
-        if not all(result.get(key) for key in ('visible', 'help_at_top', 'update_at_top')):
+        if not all(result.get(key) for key in ('visible', 'help_at_top', 'update_at_top', 'icon_loaded')):
             raise RuntimeError('Window/header verification failed: ' + label)
+        if result.get('border_pixel') != '#919191':
+            raise RuntimeError('Window outline was not painted: ' + label)
         results.append({'case': label, **result})
 
 Path('dist/startup-verification.json').write_text(json.dumps(results, indent=2), encoding='utf-8')

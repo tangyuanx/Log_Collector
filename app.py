@@ -6,7 +6,7 @@ import sys
 import time
 from pathlib import Path
 from PySide6.QtCore import QThread, QTimer, Qt, Signal, QUrl
-from PySide6.QtGui import QDesktopServices, QFont
+from PySide6.QtGui import QDesktopServices, QFont, QIcon
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFileDialog, QMessageBox, QFrame, QDialog, QStyle, QSizeGrip)
 from capture import FileCapture
@@ -14,6 +14,7 @@ from session import bind_cursor, discover_logs, validate
 from update import VERSION, check_update, download_and_install
 
 CONFIG = Path(os.environ.get('APPDATA', str(Path.home()))) / 'LogCollector' / 'config.json'
+ICON_PATH = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent)) / 'assets' / 'icon.png'
 
 
 class Worker(QThread):
@@ -88,15 +89,20 @@ class Window(QMainWindow):
         self.last_file = None
         self.begin_time = 0
         self.setWindowTitle('日志采集 · v' + VERSION)
+        self.setWindowIcon(QIcon(str(ICON_PATH)))
         self.setWindowFlag(Qt.FramelessWindowHint)
         self.resize(640, 410)
         self.setMinimumSize(540, 370)
         settings = self.load_settings()
         self.output_dir = Path(settings.get('output') or Path.home() / 'Documents' / 'LogCollector')
-        main = QWidget()
+        main = QFrame()
+        main.setObjectName('windowFrame')
+        main.setAttribute(Qt.WA_StyledBackground)
         self.setCentralWidget(main)
         outer = QVBoxLayout(main)
-        outer.setContentsMargins(0, 0, 0, 0)
+        # Reserve the border on the central frame itself: child backgrounds
+        # previously painted over the stylesheet border on QMainWindow.
+        outer.setContentsMargins(1, 1, 1, 1)
         outer.setSpacing(0)
         self.header = Header()
         self.header.setObjectName('header')
@@ -104,6 +110,12 @@ class Window(QMainWindow):
         header_row = QHBoxLayout(self.header)
         header_row.setContentsMargins(20, 0, 0, 0)
         header_row.setSpacing(9)
+        self.brand_icon = QLabel()
+        self.brand_icon.setPixmap(self.windowIcon().pixmap(24, 24))
+        self.brand_icon.setFixedSize(24, 24)
+        self.brand_icon.setAccessibleName('日志采集图标')
+        self.brand_icon.setAttribute(Qt.WA_TransparentForMouseEvents)
+        header_row.addWidget(self.brand_icon)
         title = QLabel('日志采集')
         title.setObjectName('brand')
         title.setAttribute(Qt.WA_TransparentForMouseEvents)
@@ -167,7 +179,9 @@ class Window(QMainWindow):
         root.addWidget(target)
 
         self.status = QLabel('等待选择目标')
+        self.status.setTextFormat(Qt.PlainText)
         self.status.setWordWrap(True)
+        self.status.setToolTip('日志行数按换行统计：CRLF 只计一行，非空的末行先计一行；末行继续写入不会重复累计。只有已写入会话日志文件的新内容会更新统计。')
         root.addWidget(self.status)
         self.actionbtn = QPushButton('开始采集')
         self.actionbtn.setObjectName('primary')
@@ -228,7 +242,7 @@ class Window(QMainWindow):
         self.timer.timeout.connect(self.read_new_data)
         self.setStyleSheet("""
             QWidget { background:#ffffff; color:#303030; font-size:15px; }
-            QMainWindow { border:1px solid #d8d8d8; }
+            QFrame#windowFrame { border:1px solid #919191; background:#ffffff; }
             QFrame#header { border-bottom:1px solid #d8d8d8; }
             QFrame#header QLabel { background:transparent; }
             QLabel#brand { font-size:16px; font-weight:500; }
@@ -382,7 +396,8 @@ class Window(QMainWindow):
             self.begin_time = time.monotonic()
             self.openbtn.hide()
             self.retrybtn.hide()
-            self.status.setText('采集中 · 00:00 · 已保存 0 字节')
+            self.refresh_capture_status()
+            self.fit_content()
             self.timer.start()
         except Exception as exc:
             self.capture.abort()
@@ -392,10 +407,21 @@ class Window(QMainWindow):
         try:
             validate(self.session)
             self.capture.poll()
-            seconds = int(time.monotonic() - self.begin_time)
-            self.status.setText(f'采集中 · {seconds // 60:02}:{seconds % 60:02} · 已保存 {self.capture.count:,} 字节')
+            self.refresh_capture_status()
         except Exception as exc:
             self.stop_capture(str(exc))
+
+    def refresh_capture_status(self):
+        seconds = int(time.monotonic() - self.begin_time)
+        if self.capture.last_write_at is None:
+            activity = '等待会话日志写入 · 尚无新增日志'
+        else:
+            age = max(0, int(time.monotonic() - self.capture.last_write_clock))
+            activity = f'最近写入 {self.capture.last_write_at:%H:%M:%S} · {age} 秒前'
+            if self.capture.lines.pending:
+                activity += ' · 末行写入中'
+        self.status.setText(f'采集中 · {seconds // 60:02}:{seconds % 60:02}\n'
+            f'已采集 {self.capture.line_count:,} 行日志 · {self.capture.count:,} 字节\n{activity}')
 
     def stop_capture(self, reason=''):
         self.timer.stop()
@@ -410,9 +436,11 @@ class Window(QMainWindow):
         if reason:
             self.source = None
             self.retrybtn.show()
-            self.status.setText(f'采集已停止：{reason}\n已写入的日志保留在：{target}')
+            self.status.setText(f'采集已停止：{reason}\n已保留 {self.capture.line_count:,} 行日志 · '
+                f'{self.capture.count:,} 字节\n日志文件：{target}')
         else:
-            self.status.setText(f'已保存 {self.capture.count:,} 字节 · {target.name}')
+            self.status.setText(f'已保存 {self.capture.line_count:,} 行日志 · {self.capture.count:,} 字节\n'
+                + ('本次未收到新增日志\n' if not self.capture.count else '') + target.name)
         self.refresh_controls()
         self.fit_content()
 
@@ -457,8 +485,16 @@ class Window(QMainWindow):
 
 
 def main():
+    if os.name == 'nt':
+        import ctypes
+        from ctypes import wintypes
+        set_app_id = ctypes.WinDLL('shell32').SetCurrentProcessExplicitAppUserModelID
+        set_app_id.argtypes = [wintypes.LPCWSTR]
+        set_app_id.restype = ctypes.c_long
+        set_app_id('Tangyuan.LogCollector')
     app = QApplication(sys.argv)
     app.setApplicationName('Log Collector')
+    app.setWindowIcon(QIcon(str(ICON_PATH)))
     font = QFont()
     font.setFamilies(['Times New Roman', 'Nimbus Roman', 'SimHei', '黑体', 'Heiti SC', 'Noto Sans CJK SC'])
     font.setPointSize(11)
@@ -473,7 +509,9 @@ def main():
             report.write_text(json.dumps({'version': VERSION, 'python': sys.version.split()[0],
                 'qt': qVersion(), 'visible': window.isVisible(),
                 'help_at_top': window.helpbtn.parentWidget() is window.header,
-                'update_at_top': window.updatebtn.parentWidget() is window.header}), encoding='utf-8')
+                'update_at_top': window.updatebtn.parentWidget() is window.header,
+                'icon_loaded': not window.windowIcon().isNull(),
+                'border_pixel': window.grab().toImage().pixelColor(0, 0).name()}), encoding='utf-8')
             app.quit()
         QTimer.singleShot(300, confirm_startup)
     return app.exec()

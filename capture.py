@@ -2,6 +2,7 @@
 from __future__ import annotations
 import os
 import re
+import time
 from pathlib import Path
 from datetime import datetime
 
@@ -11,6 +12,31 @@ class CaptureError(RuntimeError):
 def safe_name(s):
     return (re.sub(r'[<>:"/\\|?*\x00-\x1f]+', '_', s).strip(' ._')[:65] or 'session')
 
+class LineCounter:
+    """Count captured text lines without decoding or retaining the log body.
+
+    CRLF is one separator even across polls. A non-empty unfinished last
+    line counts as one line, then completing it does not count it again.
+    """
+    def __init__(self):
+        self.completed = 0
+        self.pending = False
+        self.previous_cr = False
+
+    @property
+    def count(self):
+        return self.completed + int(self.pending)
+
+    def feed(self, data):
+        if not data:
+            return
+        separators = data.count(b'\n') + data.count(b'\r') - data.count(b'\r\n')
+        if self.previous_cr and data.startswith(b'\n'):
+            separators -= 1
+        self.completed += separators
+        self.pending = data[-1] not in (10, 13)
+        self.previous_cr = data.endswith(b'\r')
+
 class FileCapture:
     def __init__(self):
         self.src = self.dst = None
@@ -18,6 +44,11 @@ class FileCapture:
         self.offset = self.count = 0
         self.started = None
         self.identity = None
+        self.lines = LineCounter()
+        self.last_write_at = self.last_write_clock = None
+    @property
+    def line_count(self):
+        return self.lines.count
     @property
     def active(self):
         return self.src is not None
@@ -48,6 +79,8 @@ class FileCapture:
         self.identity = (ident.st_dev, ident.st_ino)
         self.offset, self.count = offset, 0
         self.started = datetime.now()
+        self.lines = LineCounter()
+        self.last_write_at = self.last_write_clock = None
         return target
     def poll(self, limit=1048576):
         if not self.active: return 0
@@ -64,11 +97,16 @@ class FileCapture:
                 data = self.src.read(min(pending, 65536))
                 if not data: break
                 n = self.dst.write(data)
-                if n != len(data): raise CaptureError('Incomplete write')
+                if n is None: raise CaptureError('Incomplete write')
                 pending -= n
                 read_bytes += n
                 self.offset += n
                 self.count += n
+                if n:
+                    self.lines.feed(data[:n])
+                    self.last_write_at = datetime.now()
+                    self.last_write_clock = time.monotonic()
+                if n != len(data): raise CaptureError('Incomplete write')
             return read_bytes
         except OSError as e:
             raise CaptureError(str(e)) from e
