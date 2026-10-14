@@ -31,7 +31,9 @@ with tempfile.TemporaryDirectory(prefix='logcollector-verify-') as tmp:
     root = Path(tmp)
     # Python and Qt must come from the bundle, never the build-machine PATH.
     env = os.environ.copy()
-    env['PATH'] = str(Path(env['SystemRoot']) / 'System32') + ';' + env['SystemRoot']
+    # os.environ is case-insensitive on Windows; its plain dict copy is not.
+    system_root = Path(os.environ['SystemRoot'])
+    env['PATH'] = str(system_root / 'System32') + ';' + str(system_root)
     for key in ('PYTHONHOME', 'PYTHONPATH', 'QT_PLUGIN_PATH', 'QT_QPA_PLATFORM_PLUGIN_PATH'):
         env.pop(key, None)
     env['QT_QPA_PLATFORM'] = 'windows'
