@@ -1,6 +1,6 @@
 # Log Collector
 
-Windows 上的 MobaXterm 会话日志采集工具，v0.1.1。
+Windows 上的 MobaXterm 会话日志采集工具，v0.1.2。
 
 ## 使用
 
@@ -9,7 +9,7 @@ Windows 上的 MobaXterm 会话日志采集工具，v0.1.1。
 3. 目标显示“准备就绪”后，点击 **开始采集**。
 4. 点击 **停止并保存**。日志默认存到用户文档下的 `LogCollector` 目录，可更改保存位置。
 
-主界面只保留目标会话、开始/停止按钮和保存位置。无需在工具中选择原始日志目录、日志文件或输入会话名称。“检查更新”从 GitHub Releases 下载单文件 EXE，校验 SHA256 后替换并重启。
+主界面保留目标会话、开始/停止按钮和保存位置；帮助与检查更新位于顶部，界面参照 cmd_send 的字体、细边框和紧凑标题栏。无需在工具中选择原始日志目录、日志文件或输入会话名称。“检查更新”从 GitHub Releases 下载单文件 EXE，校验 SHA256 后替换并重启。
 
 ## 采集方式与边界
 
@@ -20,6 +20,14 @@ Windows 上的 MobaXterm 会话日志采集工具，v0.1.1。
 - 开始时记录日志当前末尾，排除旧内容；停止时固定末尾边界，保存到单独日志文件。MobaXterm 尚未写入文件的缓冲内容不在采集范围内，日志可能包含终端控制字符。
 - 目标关闭、文件截断或替换时停止采集并保留已写入内容。目标权限较高时，应以相同权限启动工具。
 - 不持久化 HWND/PID；工具重新启动后重新绑定，避免句柄复用误绑。
+
+## Windows 启动兼容性
+
+支持 Windows 10/11 x64，不支持 Windows 7/8。依赖版本固定；由 Windows Server 2022 构建。显式打包应用所需的 VC DLL，排除构建机的 ucrtbase.dll / APISet 系统 DLL，使用系统本身的对应库。
+
+发布前验证实际单文件 EXE 和目录版能在不含 Python 的 PATH 中启动；另验证中文程序路径和中文临时目录。报告写入 Actions 构建产物的 startup-verification.json。启动测试经过 Python DLL 加载和 Qt windows 平台插件，并确认窗口可见。
+
+如果单文件版仍报告临时目录中的 DLL 加载失败，请使用发布页的 LogCollector-Portable.zip：完整解压后运行其中的 EXE，保留旁边的 _internal 目录。便携包不需要在启动时解包到临时目录；不能把里面的 EXE 单独拿出来运行。便携目录版可检查更新，安装新版时需要下载完整便携包并解压到新目录。
 
 ## 验证状态
 
@@ -35,6 +43,6 @@ python -m unittest discover -s tests -v
 python app.py
 ```
 
-每次推送 main，GitHub Actions 在 Windows 上测试并打包单文件 `LogCollector.exe`，上传构建产物。`update.py` 中的 VERSION 尚未发布时，流程创建同名版本标签并发布 EXE 与 `SHA256SUMS.txt`。已有版本的资产不会被覆盖。发布下一版时更新 VERSION 后推送 main。
+每次推送 main，GitHub Actions 在 Windows 上测试并从 LogCollector.spec 打包单文件 `LogCollector.exe` 以及目录版，通过实际 EXE 启动测试后上传构建产物。`update.py` 中的 VERSION 尚未发布时，流程创建同名版本标签并发布 EXE、便携 ZIP 与 `SHA256SUMS.txt`。已有版本的资产不会被覆盖。发布下一版时更新 VERSION 后推送 main。
 
 仓库 Actions 需要允许流程声明的 `contents: write`。EXE 应放在有写权限的目录，以便软件内升级。升级保留 `.exe.bak` 备份；源码运行模式不支持原地 EXE 更新。

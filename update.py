@@ -9,7 +9,7 @@ import urllib.request
 from pathlib import Path
 
 REPOSITORY = 'tangyuanx/Log_Collector'
-VERSION = '0.1.1'
+VERSION = '0.1.2'
 API = f'https://api.github.com/repos/{REPOSITORY}/releases/latest'
 
 def _request(url):
@@ -33,6 +33,8 @@ def download_and_install(info):
     if not getattr(sys, 'frozen', False) or os.name != 'nt':
         raise RuntimeError('In-app replacement works only in packaged Windows executable')
     exe = Path(sys.executable).resolve()
+    if Path(getattr(sys, '_MEIPASS', '')).resolve().parent == exe.parent and (exe.parent / '_internal').is_dir():
+        raise RuntimeError('这是便携目录版。请从 GitHub 发布页下载最新 LogCollector-Portable.zip，解压到新目录后运行；不要仅替换目录中的 EXE。')
     # Avoid silently overwriting programs from other locations.
     tempdir = Path(tempfile.mkdtemp(prefix='logcollector-update-'))
     new = tempdir / 'LogCollector.exe'

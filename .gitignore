@@ -5,6 +5,7 @@ venv/
 build/
 dist/
 *.spec
+!LogCollector.spec
 .vscode/
 .idea/
 .pytest_cache/

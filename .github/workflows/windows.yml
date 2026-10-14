@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -45,13 +45,22 @@ jobs:
           "tag=$tag" >> $env:GITHUB_OUTPUT
 
       - name: Package standalone Windows executable
-        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name LogCollector app.py
+        run: python -m PyInstaller --noconfirm --clean LogCollector.spec
+
+      - name: Verify frozen EXE startup and runtime contents
+        run: python scripts/verify_windows_build.py
+
+      - name: Package portable fallback
+        shell: pwsh
+        run: Compress-Archive -Path dist/LogCollector-Portable -DestinationPath dist/LogCollector-Portable.zip -Force
 
       - name: Generate SHA256 checksum
         shell: pwsh
         run: |
           $hash = (Get-FileHash -Path dist/LogCollector.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  LogCollector.exe" | Set-Content -Path dist/SHA256SUMS.txt -Encoding ascii
+          $portableHash = (Get-FileHash -Path dist/LogCollector-Portable.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$portableHash  LogCollector-Portable.zip" | Add-Content -Path dist/SHA256SUMS.txt -Encoding ascii
 
       - name: Upload Windows build artifact
         uses: actions/upload-artifact@v4
@@ -59,7 +68,9 @@ jobs:
           name: LogCollector-Windows-${{ steps.app_version.outputs.tag }}
           path: |
             dist/LogCollector.exe
+            dist/LogCollector-Portable.zip
             dist/SHA256SUMS.txt
+            dist/startup-verification.json
           if-no-files-found: error
 
       # Auto-publish the first Release for a new VERSION, and create its tag.
@@ -79,7 +90,7 @@ jobs:
           }
           $notesPath = "notes/$env:RELEASE_TAG.md"
           $notesArgs = if (Test-Path $notesPath) { @('--notes-file', $notesPath) } else { @('--generate-notes') }
-          gh release create $env:RELEASE_TAG dist/LogCollector.exe dist/SHA256SUMS.txt `
+          gh release create $env:RELEASE_TAG dist/LogCollector.exe dist/LogCollector-Portable.zip dist/SHA256SUMS.txt `
             --repo $env:GITHUB_REPOSITORY `
             --target $env:GITHUB_SHA `
             --title "Log Collector $env:RELEASE_TAG" `

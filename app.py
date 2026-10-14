@@ -8,7 +8,7 @@ from pathlib import Path
 from PySide6.QtCore import QThread, QTimer, Qt, Signal, QUrl
 from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QFileDialog, QMessageBox, QFrame)
+    QLabel, QPushButton, QFileDialog, QMessageBox, QFrame, QDialog, QStyle, QSizeGrip)
 from capture import FileCapture
 from session import bind_cursor, discover_logs, validate
 from update import VERSION, check_update, download_and_install
@@ -69,6 +69,14 @@ class PickButton(QPushButton):
             super().keyPressEvent(event)
 
 
+class Header(QFrame):
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self.window().windowHandle():
+            self.window().windowHandle().startSystemMove()
+        else:
+            super().mousePressEvent(event)
+
+
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -80,27 +88,65 @@ class Window(QMainWindow):
         self.last_file = None
         self.begin_time = 0
         self.setWindowTitle('日志采集 · v' + VERSION)
-        self.resize(600, 450)
+        self.setWindowFlag(Qt.FramelessWindowHint)
+        self.resize(640, 410)
         self.setMinimumSize(540, 370)
         settings = self.load_settings()
         self.output_dir = Path(settings.get('output') or Path.home() / 'Documents' / 'LogCollector')
         main = QWidget()
         self.setCentralWidget(main)
-        root = QVBoxLayout(main)
-        root.setContentsMargins(26, 24, 26, 22)
-        root.setSpacing(18)
-
+        outer = QVBoxLayout(main)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        self.header = Header()
+        self.header.setObjectName('header')
+        self.header.setFixedHeight(48)
+        header_row = QHBoxLayout(self.header)
+        header_row.setContentsMargins(20, 0, 0, 0)
+        header_row.setSpacing(9)
         title = QLabel('日志采集')
-        title.setObjectName('title')
-        root.addWidget(title)
-        subtitle = QLabel('选择一个 MobaXterm 会话，记录开始到停止之间的输出。')
+        title.setObjectName('brand')
+        title.setAttribute(Qt.WA_TransparentForMouseEvents)
+        header_row.addWidget(title)
+        en = QLabel('Log Collector')
+        en.setObjectName('secondary')
+        en.setAttribute(Qt.WA_TransparentForMouseEvents)
+        header_row.addWidget(en)
+        header_row.addStretch()
+        self.updatebtn = QPushButton('检查更新')
+        self.updatebtn.setObjectName('updateButton')
+        self.updatebtn.clicked.connect(self.check_for_updates)
+        header_row.addWidget(self.updatebtn)
+        self.helpbtn = QPushButton('使用帮助')
+        self.helpbtn.setObjectName('textButton')
+        self.helpbtn.clicked.connect(self.toggle_help)
+        header_row.addWidget(self.helpbtn)
+        for icon, title, callback in (
+            (QStyle.SP_TitleBarMinButton, '最小化', self.showMinimized),
+            (QStyle.SP_TitleBarMaxButton, '最大化 / 还原', self.toggle_maximized),
+            (QStyle.SP_TitleBarCloseButton, '关闭', self.close)):
+            button = QPushButton()
+            button.setObjectName('windowControl')
+            button.setIcon(self.style().standardIcon(icon))
+            button.setToolTip(title)
+            button.setAccessibleName(title)
+            button.setFixedSize(42, 47)
+            button.clicked.connect(callback)
+            header_row.addWidget(button)
+        outer.addWidget(self.header)
+        body = QWidget()
+        root = QVBoxLayout(body)
+        root.setContentsMargins(24, 24, 24, 18)
+        root.setSpacing(18)
+        outer.addWidget(body, 1)
+        subtitle = QLabel('选择 MobaXterm 会话，采集开始到停止之间的日志。')
         subtitle.setObjectName('secondary')
         subtitle.setWordWrap(True)
         root.addWidget(subtitle)
 
         target = QFrame()
         target.setObjectName('target')
-        target.setMinimumHeight(100)
+        target.setMinimumHeight(94)
         box = QVBoxLayout(target)
         box.setContentsMargins(16, 15, 16, 15)
         box.setSpacing(8)
@@ -125,9 +171,12 @@ class Window(QMainWindow):
         root.addWidget(self.status)
         self.actionbtn = QPushButton('开始采集')
         self.actionbtn.setObjectName('primary')
-        self.actionbtn.setMinimumHeight(46)
+        self.actionbtn.setMinimumSize(128, 38)
         self.actionbtn.clicked.connect(self.toggle_capture)
-        root.addWidget(self.actionbtn)
+        action_row = QHBoxLayout()
+        action_row.addStretch()
+        action_row.addWidget(self.actionbtn)
+        root.addLayout(action_row)
         self.openbtn = QPushButton('打开刚保存的日志')
         self.openbtn.clicked.connect(self.open_last_file)
         self.openbtn.hide()
@@ -143,52 +192,63 @@ class Window(QMainWindow):
         save_row.addWidget(self.changebtn)
         root.addLayout(save_row)
 
-        footer = QHBoxLayout()
-        self.helpbtn = QPushButton('首次使用帮助')
-        self.helpbtn.setObjectName('textButton')
-        self.helpbtn.clicked.connect(self.toggle_help)
-        footer.addWidget(self.helpbtn)
         self.retrybtn = QPushButton('重新识别日志')
         self.retrybtn.setObjectName('textButton')
         self.retrybtn.clicked.connect(self.retry_logs)
         self.retrybtn.hide()
-        footer.addWidget(self.retrybtn)
-        footer.addStretch()
-        self.updatebtn = QPushButton('检查更新')
-        self.updatebtn.setObjectName('textButton')
-        self.updatebtn.clicked.connect(self.check_for_updates)
-        footer.addWidget(self.updatebtn)
-        root.addLayout(footer)
+        root.addWidget(self.retrybtn, alignment=Qt.AlignLeft)
+        self.help_dialog = QDialog(self)
+        self.help_dialog.setWindowTitle('使用帮助')
+        self.help_dialog.resize(480, 360)
+        self.help_dialog.setMinimumSize(480, 360)
+        help_layout = QVBoxLayout(self.help_dialog)
+        help_layout.setContentsMargins(24, 24, 24, 20)
+        help_layout.setSpacing(18)
+        help_title = QLabel('采集指定会话的日志')
+        help_title.setObjectName('brand')
+        help_layout.addWidget(help_title)
         self.help = QLabel('首次使用：在 MobaXterm 的 Settings → Configuration → Terminal 中开启 '
             '“Log terminal output to the following directory”，然后重新连接会话。\n'
             '之后只需拖选会话、开始采集、停止保存，无需在这里选择原始日志文件。\n'
             '自动识别依赖会话日志句柄；若当前版本无法识别，会明确提示，不会猜选其他会话。')
         self.help.setObjectName('help')
         self.help.setWordWrap(True)
-        self.help.hide()
-        root.addWidget(self.help)
+        self.help.setMinimumHeight(230)
+        help_layout.addWidget(self.help)
+        close_help = QPushButton('知道了')
+        close_help.clicked.connect(self.help_dialog.accept)
+        help_layout.addWidget(close_help, alignment=Qt.AlignRight)
         root.addStretch()
+        grip_row = QHBoxLayout()
+        grip_row.addStretch()
+        grip_row.addWidget(QSizeGrip(self))
+        root.addLayout(grip_row)
         self.timer = QTimer(self)
         self.timer.setInterval(300)
         self.timer.timeout.connect(self.read_new_data)
         self.setStyleSheet("""
-            QWidget { background:#ffffff; color:#202620; font-size:14px; }
-            QLabel#title { font-size:24px; font-weight:600; }
-            QLabel#targetTitle { font-size:16px; font-weight:600; }
-            QLabel#secondary { color:#58615b; }
-            QFrame#target { background:#f7f9f7; border:1px solid #d8dfda; border-radius:8px; }
+            QWidget { background:#ffffff; color:#303030; font-size:15px; }
+            QMainWindow { border:1px solid #d8d8d8; }
+            QFrame#header { border-bottom:1px solid #d8d8d8; }
+            QFrame#header QLabel { background:transparent; }
+            QLabel#brand { font-size:16px; font-weight:500; }
+            QLabel#targetTitle { font-size:16px; font-weight:500; }
+            QLabel#secondary { color:#626262; }
+            QFrame#target { background:#ffffff; border:1px solid #d8d8d8; border-radius:6px; }
             QFrame#target QLabel { background:transparent; border:0; }
-            QPushButton { background:#ffffff; border:1px solid #ccd5ce; border-radius:6px; padding:8px 12px; }
-            QPushButton:hover { background:#f0f5f1; border-color:#247b52; }
-            QPushButton:focus { border:2px solid #247b52; padding:7px 11px; }
-            QPushButton:disabled { background:#f0f2f0; color:#747e77; border-color:#e0e5e1; }
-            QPushButton#primary { background:#247b52; color:#ffffff; border:0; font-weight:600; font-size:16px; }
-            QPushButton#primary:hover { background:#196440; }
-            QPushButton#primary:focus { border:2px solid #153f2b; }
-            QPushButton#primary:disabled { background:#e8eee9; color:#56665c; }
-            QPushButton#textButton { border:0; padding:4px 0; color:#476151; }
-            QPushButton#textButton:hover { color:#196440; background:transparent; }
-            QLabel#help { color:#46524a; background:#f7f9f7; padding:12px; border-radius:6px; }
+            QPushButton { background:#ffffff; border:1px solid #d8d8d8; border-radius:6px; padding:7px 12px; }
+            QPushButton:hover { background:#ededed; }
+            QPushButton:focus { border:2px solid #626262; padding:6px 11px; }
+            QPushButton:disabled { background:#f5f5f5; color:#818181; border-color:#e9e9e9; }
+            QPushButton#primary { background:#353535; color:#ffffff; border:0; font-weight:500; font-size:15px; }
+            QPushButton#primary:hover { background:#494949; }
+            QPushButton#primary:focus { border:2px solid #626262; }
+            QPushButton#primary:disabled { background:#f5f5f5; color:#818181; }
+            QPushButton#textButton { border:0; padding:5px 8px; color:#626262; font-size:13px; }
+            QPushButton#textButton:hover { color:#303030; background:#ededed; }
+            QPushButton#updateButton { font-size:13px; padding:4px 7px; border-radius:4px; color:#626262; }
+            QPushButton#windowControl { border:0; border-radius:0; padding:0; }
+            QLabel#help { color:#626262; background:#f5f5f5; padding:12px; border-radius:6px; }
         """)
         self.refresh_output_label()
         self.refresh_controls()
@@ -199,10 +259,13 @@ class Window(QMainWindow):
         layout.invalidate()
         layout.activate()
         height = layout.totalHeightForWidth(self.width())
-        height = max(450, height, self.centralWidget().minimumSizeHint().height())
+        height = max(410, height, self.centralWidget().minimumSizeHint().height())
         self.setMinimumSize(540, height)
         if self.height() < height:
             self.resize(self.width(), height)
+
+    def toggle_maximized(self):
+        self.showNormal() if self.isMaximized() else self.showMaximized()
 
     @staticmethod
     def load_settings():
@@ -284,16 +347,12 @@ class Window(QMainWindow):
         self.retrybtn.setVisible(bool(error))
         if error:
             self.status.setText(error)
-            self.help.show()
         else:
             self.status.setText('准备就绪 · 点击开始后，仅保存新增输出')
-            self.help.hide()
         self.fit_content()
 
     def toggle_help(self):
-        self.help.setVisible(not self.help.isVisible())
-        self.fit_content()
-        self.adjustSize()
+        self.help_dialog.open()
 
     def choose_output(self):
         path = QFileDialog.getExistingDirectory(self, '选择日志保存位置', str(self.output_dir))
@@ -400,9 +459,23 @@ class Window(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName('Log Collector')
-    app.setFont(QFont('Microsoft YaHei UI' if os.name == 'nt' else 'Noto Sans CJK SC', 10))
+    font = QFont()
+    font.setFamilies(['Times New Roman', 'Nimbus Roman', 'SimHei', '黑体', 'Heiti SC', 'Noto Sans CJK SC'])
+    font.setPointSize(11)
+    app.setFont(font)
     window = Window()
     window.show()
+    if len(sys.argv) == 3 and sys.argv[1] == '--startup-check':
+        report = Path(sys.argv[2])
+        def confirm_startup():
+            from PySide6.QtCore import qVersion
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text(json.dumps({'version': VERSION, 'python': sys.version.split()[0],
+                'qt': qVersion(), 'visible': window.isVisible(),
+                'help_at_top': window.helpbtn.parentWidget() is window.header,
+                'update_at_top': window.updatebtn.parentWidget() is window.header}), encoding='utf-8')
+            app.quit()
+        QTimer.singleShot(300, confirm_startup)
     return app.exec()
 
 
