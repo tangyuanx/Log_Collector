@@ -80,8 +80,13 @@ with tempfile.TemporaryDirectory(prefix='logcollector-verify-') as tmp:
         result = json.loads(report.read_text(encoding='utf-8'))
         if not all(result.get(key) for key in ('visible', 'help_at_top', 'update_at_top', 'icon_loaded')):
             raise RuntimeError('Window/header verification failed: ' + label)
-        if result.get('border_pixel') != '#919191':
+        if result.get('border_pixel') != '#d8d8d8':
             raise RuntimeError('Window outline was not painted: ' + label)
+        if not all(result.get(key) for key in ('pin_native_enabled', 'pin_native_disabled', 'pin_preserved_window', 'ui_icons_loaded')):
+            raise RuntimeError('Native pin or glyph verification failed: ' + label + ' ' + json.dumps(result))
+        frame = result.get('native_frame', {})
+        if frame.get('window_size') != frame.get('client_size'):
+            raise RuntimeError('Unwanted native frame/caption is visible: ' + label + ' ' + json.dumps(frame))
         if result.get('version_button') != 'v' + result['version']:
             raise RuntimeError('Version entry missing: ' + label)
         if label.startswith('launcher-'):
@@ -93,3 +98,4 @@ with tempfile.TemporaryDirectory(prefix='logcollector-verify-') as tmp:
 
 Path('dist/startup-verification.json').write_text(json.dumps(results, indent=2), encoding='utf-8')
 print(json.dumps(results, indent=2))
+

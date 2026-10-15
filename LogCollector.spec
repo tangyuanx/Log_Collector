@@ -13,7 +13,7 @@ for name in ('vcruntime140.dll', 'vcruntime140_1.dll'):
     runtime_binaries.append((str(candidate), '.'))
 
 a = Analysis(['app.py'], pathex=[SPECPATH], binaries=runtime_binaries,
-             datas=[('assets/icon.png', 'assets')], hiddenimports=[], hookspath=[], hooksconfig={},
+             datas=[('assets/icon.png', 'assets'), ('assets/ui', 'assets/ui')], hiddenimports=[], hookspath=[], hooksconfig={},
              runtime_hooks=[], excludes=[], noarchive=False)
 
 def system_runtime(entry):
@@ -27,3 +27,4 @@ folder_exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='LogCollector',
                  upx=False, console=False, disable_windowed_traceback=False, icon='assets/icon.ico')
 folder = COLLECT(folder_exe, a.binaries, a.datas, strip=False, upx=False,
                  name='LogCollector-Portable')
+

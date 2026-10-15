@@ -12,7 +12,7 @@ import urllib.request
 from pathlib import Path
 
 REPOSITORY = 'tangyuanx/Log_Collector'
-VERSION = '0.1.4'
+VERSION = '0.1.5'
 API = f'https://api.github.com/repos/{REPOSITORY}/releases/latest'
 
 
@@ -132,3 +132,4 @@ def download_and_install(info, progress=lambda done, total, stage: None):
     except Exception:
         shutil.rmtree(tempdir, ignore_errors=True)
         raise
+

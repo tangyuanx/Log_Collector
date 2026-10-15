@@ -5,10 +5,12 @@ import os
 import sys
 import time
 from pathlib import Path
-from PySide6.QtCore import QThread, QTimer, Qt, Signal, QUrl
+from PySide6.QtCore import QThread, QTimer, Qt, Signal, QUrl, QSize
 from PySide6.QtGui import QDesktopServices, QFont, QIcon
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFileDialog, QMessageBox, QFrame, QDialog, QStyle, QSizeGrip, QProgressBar)
+import window_chrome
+from ui_icons import icon as ui_icon
 from capture import FileCapture
 from session import bind_cursor, discover_logs, validate
 from update import VERSION, check_update, download_and_install
@@ -106,7 +108,7 @@ class PickButton(QPushButton):
     picking_changed = Signal(bool)
 
     def __init__(self, parent=None):
-        super().__init__('按住拖到终端', parent)
+        super().__init__('拖选会话', parent)
         self.picking = False
         self.setToolTip('按住左键，拖到 MobaXterm 目标会话的终端文字区域后松开；Esc 取消')
 
@@ -142,6 +144,13 @@ class PickButton(QPushButton):
 
 
 class Header(QFrame):
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.window().toggle_maximized()
+            event.accept()
+        else:
+            super().mouseDoubleClickEvent(event)
+
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton and self.window().windowHandle():
             self.window().windowHandle().startSystemMove()
@@ -162,28 +171,28 @@ class Window(QMainWindow):
         self.setWindowTitle('日志采集 · v' + VERSION)
         self.setWindowIcon(QIcon(str(ICON_PATH)))
         self.setWindowFlag(Qt.FramelessWindowHint)
-        self.resize(640, 410)
-        self.setMinimumSize(540, 370)
+        self.resize(740, 390)
+        self.setMinimumSize(660, 370)
         settings = self.load_settings()
+        self.always_on_top = settings.get('always_on_top') is True
+        self.chrome_ready = False
         self.output_dir = Path(settings.get('output') or Path.home() / 'Documents' / 'LogCollector')
         main = QFrame()
         main.setObjectName('windowFrame')
         main.setAttribute(Qt.WA_StyledBackground)
         self.setCentralWidget(main)
         outer = QVBoxLayout(main)
-        # Reserve the border on the central frame itself: child backgrounds
-        # previously painted over the stylesheet border on QMainWindow.
         outer.setContentsMargins(1, 1, 1, 1)
         outer.setSpacing(0)
         self.header = Header()
         self.header.setObjectName('header')
-        self.header.setFixedHeight(48)
+        self.header.setFixedHeight(46)
         header_row = QHBoxLayout(self.header)
-        header_row.setContentsMargins(20, 0, 0, 0)
+        header_row.setContentsMargins(19, 0, 0, 0)
         header_row.setSpacing(9)
         self.brand_icon = QLabel()
-        self.brand_icon.setPixmap(self.windowIcon().pixmap(24, 24))
-        self.brand_icon.setFixedSize(24, 24)
+        self.brand_icon.setPixmap(self.windowIcon().pixmap(23, 23))
+        self.brand_icon.setFixedSize(23, 23)
         self.brand_icon.setAccessibleName('日志采集图标')
         self.brand_icon.setAttribute(Qt.WA_TransparentForMouseEvents)
         header_row.addWidget(self.brand_icon)
@@ -192,7 +201,7 @@ class Window(QMainWindow):
         title.setAttribute(Qt.WA_TransparentForMouseEvents)
         header_row.addWidget(title)
         en = QLabel('Log Collector')
-        en.setObjectName('secondary')
+        en.setObjectName('brandEnglish')
         en.setAttribute(Qt.WA_TransparentForMouseEvents)
         header_row.addWidget(en)
         header_row.addStretch()
@@ -201,88 +210,178 @@ class Window(QMainWindow):
         self.updatebtn.setObjectName('updateButton')
         self.updatebtn.clicked.connect(self.check_for_updates)
         header_row.addWidget(self.updatebtn)
-        self.helpbtn = QPushButton('使用帮助')
-        self.helpbtn.setObjectName('textButton')
+        self.helpbtn = QPushButton()
+        self.helpbtn.setIcon(ui_icon('help'))
+        self.helpbtn.setObjectName('iconButton')
+        self.helpbtn.setFixedSize(30, 30)
+        self.helpbtn.setToolTip('使用帮助')
+        self.helpbtn.setAccessibleName('使用帮助')
         self.helpbtn.clicked.connect(self.toggle_help)
         header_row.addWidget(self.helpbtn)
-        for icon, title, callback in (
-            (QStyle.SP_TitleBarMinButton, '最小化', self.showMinimized),
-            (QStyle.SP_TitleBarMaxButton, '最大化 / 还原', self.toggle_maximized),
-            (QStyle.SP_TitleBarCloseButton, '关闭', self.close)):
+        for name, title, callback in (
+            ('minimize', '最小化', self.showMinimized),
+            ('maximize', '最大化 / 还原', self.toggle_maximized),
+            ('close', '关闭', self.close)):
             button = QPushButton()
-            button.setObjectName('windowControl')
-            button.setIcon(self.style().standardIcon(icon))
+            button.setObjectName('windowClose' if name == 'close' else 'windowControl')
+            button.setIcon(ui_icon(name))
+            button.setIconSize(QSize(14, 14))
             button.setToolTip(title)
             button.setAccessibleName(title)
-            button.setFixedSize(42, 47)
+            button.setFixedSize(42, 44)
             button.clicked.connect(callback)
             header_row.addWidget(button)
+            if name == 'maximize':
+                self.maxbtn = button
         outer.addWidget(self.header)
-        body = QWidget()
-        root = QVBoxLayout(body)
-        root.setContentsMargins(24, 24, 24, 18)
-        root.setSpacing(18)
-        outer.addWidget(body, 1)
-        subtitle = QLabel('选择 MobaXterm 会话，采集开始到停止之间的日志。')
-        subtitle.setObjectName('secondary')
-        subtitle.setWordWrap(True)
-        root.addWidget(subtitle)
+        title_separator = QFrame()
+        title_separator.setObjectName('titleSeparator')
+        title_separator.setFixedHeight(1)
+        outer.addWidget(title_separator)
 
-        target = QFrame()
-        target.setObjectName('target')
-        target.setMinimumHeight(94)
-        box = QVBoxLayout(target)
-        box.setContentsMargins(16, 15, 16, 15)
-        box.setSpacing(8)
-        target_row = QHBoxLayout()
+        self.toolbar = QFrame()
+        self.toolbar.setObjectName('toolbar')
+        toolbar_row = QHBoxLayout(self.toolbar)
+        toolbar_row.setContentsMargins(20, 10, 15, 10)
+        toolbar_row.setSpacing(12)
+        target_icon = QLabel()
+        target_icon.setPixmap(ui_icon('crosshair').pixmap(17, 17))
+        toolbar_row.addWidget(target_icon)
+        target_text = QVBoxLayout()
+        target_text.setSpacing(3)
         self.target_title = QLabel('尚未选择目标会话')
         self.target_title.setObjectName('targetTitle')
+        self.target_title.setTextFormat(Qt.PlainText)
         self.target_title.setWordWrap(True)
-        target_row.addWidget(self.target_title, 1)
+        target_text.addWidget(self.target_title)
+        self.target_detail = QLabel('按住“拖选会话”，拖到终端文字区域后松开。')
+        self.target_detail.setObjectName('secondary')
+        self.target_detail.setTextFormat(Qt.PlainText)
+        self.target_detail.setWordWrap(True)
+        target_text.addWidget(self.target_detail)
+        toolbar_row.addLayout(target_text, 1)
         self.pickbtn = PickButton()
+        self.pickbtn.setObjectName('targetButton')
         self.pickbtn.released_at_target.connect(self.pick_target)
         self.pickbtn.picking_changed.connect(self.picking_changed)
-        target_row.addWidget(self.pickbtn)
-        box.addLayout(target_row)
-        self.target_detail = QLabel('按住右侧按钮，拖到终端文字区域后松开。')
-        self.target_detail.setObjectName('secondary')
-        self.target_detail.setWordWrap(True)
-        box.addWidget(self.target_detail)
-        root.addWidget(target)
+        toolbar_row.addWidget(self.pickbtn)
+        divider = QFrame()
+        divider.setObjectName('toolbarDivider')
+        divider.setFixedSize(1, 20)
+        toolbar_row.addWidget(divider)
+        self.pinbtn = QPushButton()
+        self.pinbtn.setObjectName('pinButton')
+        self.pinbtn.setIcon(ui_icon('pin'))
+        self.pinbtn.setIconSize(QSize(17, 17))
+        self.pinbtn.setFixedSize(32, 32)
+        self.pinbtn.setCheckable(True)
+        self.pinbtn.setChecked(self.always_on_top)
+        self.pinbtn.clicked.connect(self.set_always_on_top)
+        self.refresh_pin_button()
+        toolbar_row.addWidget(self.pinbtn)
+        outer.addWidget(self.toolbar)
 
-        self.status = QLabel('等待选择目标')
+        workspace = QWidget()
+        work = QHBoxLayout(workspace)
+        work.setContentsMargins(0, 0, 0, 0)
+        work.setSpacing(0)
+        outer.addWidget(workspace, 1)
+        content = QWidget()
+        root = QVBoxLayout(content)
+        root.setContentsMargins(26, 23, 26, 20)
+        root.setSpacing(12)
+        work.addWidget(content, 1)
+        self.capture_state = QLabel('本次采集')
+        self.capture_state.setObjectName('secondary')
+        root.addWidget(self.capture_state)
+        count_row = QHBoxLayout()
+        count_row.setSpacing(10)
+        self.line_value = QLabel('0')
+        self.line_value.setObjectName('lineValue')
+        count_row.addWidget(self.line_value, alignment=Qt.AlignBaseline)
+        unit = QLabel('行日志')
+        unit.setObjectName('secondary')
+        count_row.addWidget(unit, alignment=Qt.AlignBaseline)
+        count_row.addStretch()
+        root.addLayout(count_row)
+        metrics = QHBoxLayout()
+        metrics.setSpacing(24)
+        self.bytes_value = QLabel('大小  0 B')
+        self.bytes_value.setObjectName('secondary')
+        self.time_value = QLabel('时长  00:00')
+        self.time_value.setObjectName('secondary')
+        metrics.addWidget(self.bytes_value)
+        metrics.addWidget(self.time_value)
+        metrics.addStretch()
+        root.addLayout(metrics)
+        root.addSpacing(4)
+        self.status = QLabel('等待选择目标会话')
         self.status.setTextFormat(Qt.PlainText)
+        self.status.setObjectName('captureStatus')
         self.status.setWordWrap(True)
-        self.status.setToolTip('日志行数按换行统计：CRLF 只计一行，非空的末行先计一行；末行继续写入不会重复累计。只有已写入会话日志文件的新内容会更新统计。')
+        self.line_value.setToolTip('按文本行统计，CRLF 只计一行；非空末行计一行，继续写入不会重复累计。')
         root.addWidget(self.status)
-        self.actionbtn = QPushButton('开始采集')
-        self.actionbtn.setObjectName('primary')
-        self.actionbtn.setMinimumSize(128, 38)
-        self.actionbtn.clicked.connect(self.toggle_capture)
-        action_row = QHBoxLayout()
-        action_row.addStretch()
-        action_row.addWidget(self.actionbtn)
-        root.addLayout(action_row)
-        self.openbtn = QPushButton('打开刚保存的日志')
-        self.openbtn.clicked.connect(self.open_last_file)
-        self.openbtn.hide()
-        root.addWidget(self.openbtn)
-
-        save_row = QHBoxLayout()
-        save_row.addWidget(QLabel('保存到'))
-        self.output_label = QLabel()
-        self.output_label.setObjectName('secondary')
-        save_row.addWidget(self.output_label, 1)
-        self.changebtn = QPushButton('更改')
-        self.changebtn.clicked.connect(self.choose_output)
-        save_row.addWidget(self.changebtn)
-        root.addLayout(save_row)
-
+        root.addStretch()
         self.retrybtn = QPushButton('重新识别日志')
         self.retrybtn.setObjectName('textButton')
         self.retrybtn.clicked.connect(self.retry_logs)
         self.retrybtn.hide()
         root.addWidget(self.retrybtn, alignment=Qt.AlignLeft)
+
+        rail = QFrame()
+        rail.setObjectName('actionRail')
+        rail.setFixedWidth(172)
+        actions = QVBoxLayout(rail)
+        actions.setContentsMargins(16, 20, 16, 17)
+        actions.setSpacing(11)
+        self.actionbtn = QPushButton('开始采集')
+        self.actionbtn.setObjectName('primary')
+        self.actionbtn.setMinimumHeight(42)
+        self.actionbtn.setIcon(ui_icon('play', '#ffffff'))
+        self.actionbtn.clicked.connect(self.toggle_capture)
+        actions.addWidget(self.actionbtn)
+        self.openbtn = QPushButton('打开日志')
+        self.openbtn.setIcon(ui_icon('file'))
+        self.openbtn.clicked.connect(self.open_last_file)
+        self.openbtn.hide()
+        actions.addWidget(self.openbtn)
+        action_hint = QLabel('只保存开始到停止之间的新增日志。')
+        action_hint.setObjectName('secondary')
+        action_hint.setAlignment(Qt.AlignHCenter)
+        action_hint.setWordWrap(True)
+        actions.addWidget(action_hint)
+        actions.addStretch()
+        rail_note = QLabel('切换标签页后，\n仍采集绑定的会话。')
+        rail_note.setObjectName('secondary')
+        rail_note.setWordWrap(True)
+        actions.addWidget(rail_note)
+        work.addWidget(rail)
+
+        footer = QFrame()
+        footer.setObjectName('footer')
+        save_row = QHBoxLayout(footer)
+        save_row.setContentsMargins(20, 0, 8, 0)
+        save_row.setSpacing(10)
+        folder_icon = QLabel()
+        folder_icon.setPixmap(ui_icon('folder').pixmap(15, 15))
+        save_row.addWidget(folder_icon)
+        save_label = QLabel('保存到')
+        save_label.setObjectName('secondary')
+        save_row.addWidget(save_label)
+        self.output_label = QLabel()
+        self.output_label.setObjectName('secondary')
+        self.output_label.setMinimumWidth(0)
+        save_row.addWidget(self.output_label, 1)
+        self.changebtn = QPushButton('更改')
+        self.changebtn.setObjectName('textButton')
+        self.changebtn.clicked.connect(self.choose_output)
+        save_row.addWidget(self.changebtn)
+        grip = QSizeGrip(self)
+        grip.setFixedSize(12, 12)
+        save_row.addWidget(grip, alignment=Qt.AlignBottom)
+        footer.setMinimumHeight(42)
+        outer.addWidget(footer)
+
         self.update_dialog = UpdateDialog(self)
         self.help_dialog = QDialog(self)
         self.help_dialog.setWindowTitle('使用帮助')
@@ -305,36 +404,40 @@ class Window(QMainWindow):
         close_help = QPushButton('知道了')
         close_help.clicked.connect(self.help_dialog.accept)
         help_layout.addWidget(close_help, alignment=Qt.AlignRight)
-        root.addStretch()
-        grip_row = QHBoxLayout()
-        grip_row.addStretch()
-        grip_row.addWidget(QSizeGrip(self))
-        root.addLayout(grip_row)
         self.timer = QTimer(self)
         self.timer.setInterval(300)
         self.timer.timeout.connect(self.read_new_data)
         self.setStyleSheet("""
             QWidget { background:#ffffff; color:#303030; font-size:15px; }
-            QFrame#windowFrame { border:1px solid #919191; background:#ffffff; }
-            QFrame#header { border-bottom:1px solid #d8d8d8; }
+            QFrame#windowFrame { border:1px solid #d8d8d8; background:#ffffff; }
+            QFrame#toolbar { border-bottom:1px solid #d8d8d8; }
+            QFrame#titleSeparator { background:#d8d8d8; border:0; }
             QFrame#header QLabel { background:transparent; }
-            QLabel#brand { font-size:16px; font-weight:500; }
-            QLabel#targetTitle { font-size:16px; font-weight:500; }
-            QLabel#secondary { color:#626262; }
-            QFrame#target { background:#ffffff; border:1px solid #d8d8d8; border-radius:6px; }
-            QFrame#target QLabel { background:transparent; border:0; }
-            QPushButton { background:#ffffff; border:1px solid #d8d8d8; border-radius:6px; padding:7px 12px; }
+            QLabel#brand, QLabel#targetTitle { font-size:16px; font-weight:500; }
+            QLabel#brandEnglish { font-size:13px; color:#626262; }
+            QLabel#secondary { color:#626262; font-size:13px; }
+            QLabel#lineValue { font-size:42px; font-weight:400; }
+            QLabel#captureStatus { font-size:14px; color:#626262; }
+            QFrame#toolbarDivider { background:#d8d8d8; border:0; }
+            QFrame#actionRail { border-left:1px solid #d8d8d8; }
+            QFrame#footer { border-top:1px solid #d8d8d8; }
+            QPushButton { background:#ffffff; border:1px solid #d8d8d8; border-radius:6px; padding:7px 10px; }
             QPushButton:hover { background:#ededed; }
-            QPushButton:focus { border:2px solid #626262; padding:6px 11px; }
+            QPushButton:focus { border:1px solid #818181; }
             QPushButton:disabled { background:#f5f5f5; color:#818181; border-color:#e9e9e9; }
             QPushButton#primary { background:#353535; color:#ffffff; border:0; font-weight:500; font-size:15px; }
             QPushButton#primary:hover { background:#494949; }
-            QPushButton#primary:focus { border:2px solid #626262; }
+            QPushButton#primary:focus { border:1px solid #818181; }
             QPushButton#primary:disabled { background:#f5f5f5; color:#818181; }
+            QPushButton#targetButton { font-size:13px; padding:5px 9px; }
             QPushButton#textButton { border:0; padding:5px 8px; color:#626262; font-size:13px; }
             QPushButton#textButton:hover { color:#303030; background:#ededed; }
-            QPushButton#updateButton { font-size:13px; padding:4px 7px; border-radius:4px; color:#626262; }
-            QPushButton#windowControl { border:0; border-radius:0; padding:0; }
+            QPushButton#updateButton { font-size:13px; padding:3px 6px; border-radius:4px; color:#626262; }
+            QPushButton#iconButton, QPushButton#pinButton { border:0; padding:0; border-radius:5px; }
+            QPushButton#pinButton:checked { background:#ededed; }
+            QPushButton#iconButton:focus, QPushButton#pinButton:focus { border:1px solid #818181; }
+            QPushButton#windowControl, QPushButton#windowClose { border:0; border-radius:0; padding:0; }
+            QPushButton#windowClose:hover { background:#e5e5e5; }
             QProgressBar { border:1px solid #d8d8d8; border-radius:4px; background:#f5f5f5; text-align:center; min-height:22px; }
             QProgressBar::chunk { background:#a6a6a6; border-radius:3px; }
             QLabel#help { color:#626262; background:#f5f5f5; padding:12px; border-radius:6px; }
@@ -348,13 +451,58 @@ class Window(QMainWindow):
         layout.invalidate()
         layout.activate()
         height = layout.totalHeightForWidth(self.width())
-        height = max(410, height, self.centralWidget().minimumSizeHint().height())
-        self.setMinimumSize(540, height)
+        height = max(370, height, self.centralWidget().minimumSizeHint().height())
+        self.setMinimumSize(660, height)
         if self.height() < height:
             self.resize(self.width(), height)
 
     def toggle_maximized(self):
         self.showNormal() if self.isMaximized() else self.showMaximized()
+
+    def refresh_pin_button(self):
+        self.pinbtn.setChecked(self.always_on_top)
+        self.pinbtn.setToolTip('取消置顶' if self.always_on_top else '置顶显示')
+        self.pinbtn.setAccessibleName('取消置顶' if self.always_on_top else '置顶显示')
+
+    def set_always_on_top(self, enabled):
+        enabled = bool(enabled)
+        previous = self.always_on_top
+        try:
+            if not window_chrome.set_topmost(int(self.winId()), enabled):
+                visible = self.isVisible()
+                geometry, state = self.geometry(), self.windowState()
+                self.setWindowFlag(Qt.WindowStaysOnTopHint, enabled)
+                self.setGeometry(geometry)
+                self.setWindowState(state)
+                if visible:
+                    self.show()
+            self.always_on_top = enabled
+            self.save_settings()
+        except OSError as exc:
+            self.always_on_top = previous
+            QMessageBox.warning(self, '无法更改置顶状态', str(exc))
+        self.refresh_pin_button()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self.chrome_ready:
+            self.chrome_ready = True
+            window_chrome.apply_frame(int(self.winId()))
+            self.set_always_on_top(self.always_on_top)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'output_label'):
+            self.refresh_output_label()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if hasattr(self, 'maxbtn'):
+            self.maxbtn.setIcon(ui_icon('restore' if self.isMaximized() else 'maximize'))
+
+    def nativeEvent(self, event_type, message):
+        result = window_chrome.handle_message(message)
+        return (True, result) if result is not None else super().nativeEvent(event_type, message)
 
     @staticmethod
     def load_settings():
@@ -367,14 +515,14 @@ class Window(QMainWindow):
     def save_settings(self):
         try:
             CONFIG.parent.mkdir(parents=True, exist_ok=True)
-            CONFIG.write_text(json.dumps({'output': str(self.output_dir)}, ensure_ascii=False, indent=2), encoding='utf-8')
+            CONFIG.write_text(json.dumps({'output': str(self.output_dir), 'always_on_top': self.always_on_top}, ensure_ascii=False, indent=2), encoding='utf-8')
         except OSError:
             pass
 
     def refresh_output_label(self):
         full = str(self.output_dir)
         self.output_label.setToolTip(full)
-        self.output_label.setText(self.output_label.fontMetrics().elidedText(full, Qt.ElideMiddle, 330))
+        self.output_label.setText(self.output_label.fontMetrics().elidedText(full, Qt.ElideMiddle, max(80, self.width() - 200)))
 
     def refresh_controls(self):
         busy = self.worker is not None
@@ -385,6 +533,7 @@ class Window(QMainWindow):
         self.updatebtn.setEnabled(not active and not busy)
         self.actionbtn.setEnabled(active or (not busy and self.session is not None and self.source is not None))
         self.actionbtn.setText('停止并保存' if active else '开始采集')
+        self.actionbtn.setIcon(ui_icon('stop' if active else 'play', '#ffffff' if self.actionbtn.isEnabled() else '#818181'))
 
     def run_job(self, function, callback, progress_callback=None):
         if self.worker is not None:
@@ -407,6 +556,7 @@ class Window(QMainWindow):
         self.refresh_controls()
 
     def picking_changed(self, picking):
+        self.pinbtn.setEnabled(not picking)
         if picking:
             self.status.setText('将指针拖到目标会话的终端文字区域，松开即可绑定；Esc 取消。')
         else:
@@ -474,6 +624,7 @@ class Window(QMainWindow):
             self.openbtn.hide()
             self.retrybtn.hide()
             self.refresh_capture_status()
+            self.refresh_controls()
             self.fit_content()
             self.timer.start()
         except Exception as exc:
@@ -497,8 +648,20 @@ class Window(QMainWindow):
             activity = f'最近写入 {self.capture.last_write_at:%H:%M:%S} · {age} 秒前'
             if self.capture.lines.pending:
                 activity += ' · 末行写入中'
-        self.status.setText(f'采集中 · {seconds // 60:02}:{seconds % 60:02}\n'
-            f'已采集 {self.capture.line_count:,} 行日志 · {self.capture.count:,} 字节\n{activity}')
+        self.capture_state.setText('采集中')
+        self.refresh_metrics(seconds)
+        self.status.setText(activity)
+
+    def refresh_metrics(self, seconds=None):
+        self.line_value.setText(f'{self.capture.line_count:,}')
+        size = self.capture.count
+        size_text = f'{size / 1048576:.1f} MB' if size >= 1048576 else f'{size / 1024:.1f} KB' if size >= 1024 else f'{size:,} B'
+        self.bytes_value.setText('大小  ' + size_text)
+        self.bytes_value.setToolTip(f'{size:,} 字节')
+        if seconds is None:
+            seconds = max(0, int(time.monotonic() - self.begin_time))
+        self.time_value.setText(f'时长  {seconds // 60:02}:{seconds % 60:02}')
+
 
     def stop_capture(self, reason=''):
         self.timer.stop()
@@ -509,6 +672,8 @@ class Window(QMainWindow):
             reason = (reason + '；' if reason else '') + str(exc)
             self.capture.abort()
         self.last_file = target
+        self.refresh_metrics()
+        self.capture_state.setText('采集已停止' if reason else '采集已保存')
         self.openbtn.setVisible(target is not None)
         if reason:
             self.source = None
@@ -516,8 +681,7 @@ class Window(QMainWindow):
             self.status.setText(f'采集已停止：{reason}\n已保留 {self.capture.line_count:,} 行日志 · '
                 f'{self.capture.count:,} 字节\n日志文件：{target}')
         else:
-            self.status.setText(f'已保存 {self.capture.line_count:,} 行日志 · {self.capture.count:,} 字节\n'
-                + ('本次未收到新增日志\n' if not self.capture.count else '') + target.name)
+            self.status.setText('已保存：' + target.name + ('\n本次未收到新增日志' if not self.capture.count else ''))
         self.refresh_controls()
         self.fit_content()
 
@@ -607,6 +771,17 @@ def main():
         report = Path(sys.argv[2])
         def confirm_startup():
             from PySide6.QtCore import qVersion
+            original_hwnd = int(window.winId())
+            original_geometry = window.geometry()
+            original_pin = window.always_on_top
+            window.set_always_on_top(True)
+            pinned_native = window_chrome.is_topmost(int(window.winId()))
+            window.set_always_on_top(False)
+            unpinned_native = window_chrome.is_topmost(int(window.winId()))
+            pin_preserved_window = original_hwnd == int(window.winId()) and original_geometry == window.geometry()
+            window.set_always_on_top(original_pin)
+            native_frame = window_chrome.frame_report(int(window.winId()))
+
             report.parent.mkdir(parents=True, exist_ok=True)
             report.write_text(json.dumps({'version': VERSION, 'python': sys.version.split()[0],
                 'qt': qVersion(), 'visible': window.isVisible(),
@@ -614,6 +789,9 @@ def main():
                 'update_at_top': window.updatebtn.parentWidget() is window.header,
                 'icon_loaded': not window.windowIcon().isNull(),
                 'version_button': window.updatebtn.text(),
+                'pin_native_enabled': pinned_native, 'pin_native_disabled': unpinned_native is False,
+                'pin_preserved_window': pin_preserved_window, 'native_frame': native_frame,
+                'ui_icons_loaded': not window.pinbtn.icon().isNull() and not window.helpbtn.icon().isNull(),
                 'runtime_path': str(getattr(sys, '_MEIPASS', '')),
                 'launcher_path': os.environ.get('LOGCOLLECTOR_LAUNCHER', ''),
                 'border_pixel': window.grab().toImage().pixelColor(0, 0).name()}), encoding='utf-8')
@@ -624,3 +802,4 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
+

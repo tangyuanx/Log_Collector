@@ -68,19 +68,20 @@ class WindowTests(unittest.TestCase):
         source.write_bytes(b'old\n')
         with patch('app.validate'):
             self.window.begin_capture(source, '')
-            self.assertIn('0 行日志', self.window.status.text())
+            self.assertEqual(self.window.line_value.text(), '0')
             self.assertIn('尚无新增日志', self.window.status.text())
             with source.open('ab') as stream: stream.write(b'first\r\nsecond')
             self.window.read_new_data()
-            self.assertIn('2 行日志', self.window.status.text())
+            self.assertEqual(self.window.line_value.text(), '2')
             self.assertIn('最近写入', self.window.status.text())
             self.assertIn('末行写入中', self.window.status.text())
             with source.open('ab') as stream: stream.write(b'\r\n')
             self.window.read_new_data()
-            self.assertIn('2 行日志', self.window.status.text())
+            self.assertEqual(self.window.line_value.text(), '2')
             self.assertNotIn('末行写入中', self.window.status.text())
             self.window.stop_capture()
-            self.assertIn('已保存 2 行日志', self.window.status.text())
+            self.assertEqual(self.window.line_value.text(), '2')
+            self.assertIn('已保存', self.window.status.text())
 
     def test_closed_target_stops_and_preserves_saved_data(self):
         source = self.folder / 'session.log'
@@ -139,3 +140,32 @@ class WindowTests(unittest.TestCase):
         self.assertTrue(dialog.upgrade.isEnabled())
         self.assertTrue(self.window.pickbtn.isEnabled())
         dialog.reject()
+
+
+    def test_pin_changes_persist_without_stopping_capture(self):
+        import json
+        source = self.folder / 'session.log'
+        source.write_bytes(b'old\n')
+        with patch('app.validate'), patch('app.window_chrome.set_topmost', return_value=True):
+            self.window.begin_capture(source, '')
+            self.window.pinbtn.click()
+            self.assertTrue(self.window.always_on_top)
+            self.assertTrue(self.window.pinbtn.isChecked())
+            self.assertEqual(self.window.pinbtn.toolTip(), '取消置顶')
+            self.assertTrue(self.window.timer.isActive())
+            with source.open('ab') as stream:
+                stream.write(b'first\nsecond\n')
+            self.window.read_new_data()
+            self.assertEqual(self.window.line_value.text(), '2')
+            settings = json.loads((self.folder / 'config.json').read_text(encoding='utf-8'))
+            self.assertTrue(settings['always_on_top'])
+            restored = Window()
+            self.assertTrue(restored.always_on_top)
+            self.assertTrue(restored.pinbtn.isChecked())
+            restored.close()
+            self.window.pinbtn.click()
+            self.assertFalse(self.window.always_on_top)
+            self.assertTrue(self.window.capture.active)
+            self.window.stop_capture()
+            self.assertEqual(self.window.last_file.read_bytes(), b'first\nsecond\n')
+            self.assertFalse(json.loads((self.folder / 'config.json').read_text())['always_on_top'])
