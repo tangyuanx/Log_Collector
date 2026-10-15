@@ -82,6 +82,7 @@ jobs:
             dist/SHA256SUMS.txt
             dist/startup-verification.json
             dist/text-*.png
+            dist/update-*.png
           if-no-files-found: error
 
       # Auto-publish the first Release for a new VERSION, and create its tag.

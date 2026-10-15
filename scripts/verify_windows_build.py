@@ -97,6 +97,26 @@ with tempfile.TemporaryDirectory(prefix='logcollector-verify-') as tmp:
                 raise RuntimeError('Text rendering verification failed: ' + label + ' ' + json.dumps(text))
         if len(typography.get('labels', [])) != 5:
             raise RuntimeError('Missing text render probes: ' + label)
+        popup = result.get('update_dialog', [])
+        if [state['state'] for state in popup] != ['checking', 'available', 'downloading', 'failure', 'latest']:
+            raise RuntimeError('Missing update dialog states: ' + label)
+        for state in popup:
+            for text in state['typography']['labels']:
+                if (not text['no_missing_glyphs'] or not text['not_clipped'] or text['colored_pixels']
+                        or text['weight'] != 400 or text['pixel_size'] != 16
+                        or text['hinting'] != 'PreferFullHinting' or not text['strategy'] & 2048):
+                    raise RuntimeError('Update text rendering failed: ' + label + ' ' + json.dumps(text))
+            for button in state['buttons']:
+                if (not button['no_missing_glyphs'] or not button['fits'] or button['weight'] != 400
+                        or button['pixel_size'] != 16 or button['hinting'] != 'PreferFullHinting'
+                        or not button['strategy'] & 2048):
+                    raise RuntimeError('Update button rendering failed: ' + label + ' ' + json.dumps(button))
+            popup_preview = state.pop('preview_png')
+            if label in ('launcher-normal', 'launcher-dpi125', 'launcher-dpi150'):
+                import base64
+                Path('dist/update-' + label + '-' + state['state'] + '.png').write_bytes(base64.b64decode(popup_preview))
+                if state['state'] == 'available':
+                    print('UPDATE_PREVIEW ' + label + ' ' + popup_preview)
         preview = typography.pop('preview_png', '')
         if label in ('launcher-normal', 'launcher-dpi125', 'launcher-dpi150'):
             import base64

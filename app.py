@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
     QLabel, QPushButton, QFileDialog, QMessageBox, QFrame, QDialog, QStyle, QSizeGrip, QProgressBar)
 import window_chrome
 from ui_icons import icon as ui_icon
-from typography import configure_platform_fonts, configure_typography, inspect_text
+from typography import configure_platform_fonts, configure_typography, inspect_text, inspect_update_dialog
 from capture import FileCapture
 from session import bind_cursor, discover_logs, validate
 from update import VERSION, check_update, download_and_install
@@ -40,7 +40,21 @@ class UpdateDialog(QDialog):
         self.busy = False
         self.info = None
         self.setWindowTitle('版本与更新')
-        self.setMinimumWidth(440)
+        # A separate window needs an explicit text policy, including its buttons.
+        # Keep Chinese on a 16px grid instead of the old 15px compact body.
+        self.setAttribute(Qt.WA_WindowPropagation, True)
+        self.setFont(QApplication.font())
+        self.setObjectName('updateDialog')
+        self.setStyleSheet('''
+            QDialog#updateDialog { background:#ffffff; }
+            QDialog#updateDialog QLabel, QDialog#updateDialog QPushButton,
+            QDialog#updateDialog QProgressBar { font-size:16px; font-weight:400; }
+            QDialog#updateDialog QLabel { color:#303030; padding:2px 0; }
+            QDialog#updateDialog QLabel#secondary { color:#505050; }
+            QDialog#updateDialog QPushButton { min-height:24px; padding:8px 14px; }
+            QDialog#updateDialog QPushButton#primary { font-size:16px; }
+        ''')
+        self.setMinimumWidth(520)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(16)
@@ -50,6 +64,7 @@ class UpdateDialog(QDialog):
         self.message = QLabel('正在检查新版本…')
         self.message.setTextFormat(Qt.PlainText)
         self.message.setWordWrap(True)
+        self.message.setMinimumHeight(56)
         layout.addWidget(self.message)
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
@@ -57,10 +72,12 @@ class UpdateDialog(QDialog):
         self.progress.hide()
         layout.addWidget(self.progress)
         self.detail = QLabel()
+        self.detail.setTextFormat(Qt.PlainText)
         self.detail.setObjectName('secondary')
         self.detail.hide()
         layout.addWidget(self.detail)
         row = QHBoxLayout()
+        row.setSpacing(12)
         row.addStretch()
         self.check = QPushButton('重新检查')
         self.check.clicked.connect(parent.check_for_updates)
@@ -785,7 +802,7 @@ def main():
             window.set_always_on_top(original_pin)
             native_frame = window_chrome.frame_report(int(window.winId()))
             text_report = inspect_text(window.brand_label, window.target_title, window.target_detail, window.status, window.bytes_value)
-
+            update_report = inspect_update_dialog(window)
 
             report.parent.mkdir(parents=True, exist_ok=True)
             report.write_text(json.dumps({'version': VERSION, 'python': sys.version.split()[0],
@@ -795,6 +812,7 @@ def main():
                 'icon_loaded': not window.windowIcon().isNull(),
                 'version_button': window.updatebtn.text(),
                 'typography': text_report,
+                'update_dialog': update_report,
                 'pin_native_enabled': pinned_native, 'pin_native_disabled': unpinned_native is False,
                 'pin_preserved_window': pin_preserved_window, 'native_frame': native_frame,
                 'ui_icons_loaded': not window.pinbtn.icon().isNull() and not window.helpbtn.icon().isNull(),

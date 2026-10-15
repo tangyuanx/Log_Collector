@@ -81,3 +81,61 @@ def inspect_text(*labels):
     buffer.open(QIODevice.WriteOnly)
     panel.save(buffer, 'PNG')
     return {'labels': results, 'preview_png': base64.b64encode(bytes(buffer.data())).decode('ascii')}
+
+
+def inspect_update_dialog(window):
+    """Exercise the real popup without network/update side effects in build QA."""
+    import base64
+    from PySide6.QtCore import QBuffer, QIODevice
+    from PySide6.QtWidgets import QApplication
+    dialog = window.update_dialog
+    dialog.open()
+    states = []
+    for state in ('checking', 'available', 'downloading', 'failure', 'latest'):
+        dialog.progress.hide()
+        dialog.detail.hide()
+        if state == 'checking':
+            dialog.message.setText('正在检查新版本…')
+            dialog.upgrade.hide()
+            dialog.set_busy(True)
+        elif state == 'available':
+            window.update_checked({'version': 'v9.0.0', 'size': 1048576}, '')
+        elif state == 'downloading':
+            dialog.set_busy(True)
+            dialog.download_progress(524288, 1048576, '下载中')
+        elif state == 'failure':
+            window.update_checked(None, '网络连接中断，请稍后重试。')
+        else:
+            window.update_checked(None, '')
+        dialog.adjustSize()
+        QApplication.processEvents()
+        labels = [dialog.version, dialog.message]
+        if dialog.detail.isVisible():
+            labels.append(dialog.detail)
+        typography = inspect_text(*labels)
+        typography.pop('preview_png')
+        buttons = []
+        for button in (dialog.check, dialog.upgrade, dialog.closebtn):
+            if not button.isVisible():
+                continue
+            font = button.font()
+            layout = QTextLayout(button.text(), font)
+            layout.beginLayout()
+            line = layout.createLine()
+            layout.endLayout()
+            runs = layout.glyphRuns()
+            glyphs = [g for run in runs for g in run.glyphIndexes()]
+            buttons.append({'text': button.text(), 'pixel_size': font.pixelSize(),
+                'weight': int(font.weight()), 'strategy': int(font.styleStrategy().value),
+                'hinting': font.hintingPreference().name,
+                'families_used': sorted({run.rawFont().familyName() for run in runs}),
+                'no_missing_glyphs': bool(glyphs) and all(g != 0 for g in glyphs),
+                'fits': line.naturalTextWidth() <= button.width() - 28
+                        and line.height() <= button.height() - 16})
+        buffer = QBuffer()
+        buffer.open(QIODevice.WriteOnly)
+        dialog.grab().save(buffer, 'PNG')
+        states.append({'state': state, 'typography': typography, 'buttons': buttons,
+            'preview_png': base64.b64encode(bytes(buffer.data())).decode('ascii')})
+    dialog.reject()
+    return states
