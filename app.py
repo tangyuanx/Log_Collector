@@ -416,10 +416,10 @@ class Window(QMainWindow):
             QFrame#titleSeparator { background:#d8d8d8; border:0; }
             QFrame#header QLabel { background:transparent; }
             QLabel#brand, QLabel#targetTitle { font-size:16px; font-weight:400; padding:2px 0; }
-            QLabel#brandEnglish { font-size:13px; color:#626262; }
-            QLabel#secondary { color:#626262; font-size:13px; }
+            QLabel#brandEnglish { font-size:14px; color:#505050; }
+            QLabel#secondary { color:#505050; font-size:14px; }
             QLabel#lineValue { font-size:42px; font-weight:400; }
-            QLabel#captureStatus { font-size:14px; color:#626262; }
+            QLabel#captureStatus { font-size:14px; color:#505050; }
             QFrame#toolbarDivider { background:#d8d8d8; border:0; }
             QFrame#actionRail { border-left:1px solid #d8d8d8; }
             QFrame#footer { border-top:1px solid #d8d8d8; }
@@ -431,10 +431,10 @@ class Window(QMainWindow):
             QPushButton#primary:hover { background:#494949; }
             QPushButton#primary:focus { border:1px solid #818181; }
             QPushButton#primary:disabled { background:#f5f5f5; color:#818181; }
-            QPushButton#targetButton { font-size:13px; padding:5px 9px; }
-            QPushButton#textButton { border:0; padding:5px 8px; color:#626262; font-size:13px; }
+            QPushButton#targetButton { font-size:14px; padding:5px 9px; }
+            QPushButton#textButton { border:0; padding:5px 8px; color:#505050; font-size:14px; }
             QPushButton#textButton:hover { color:#303030; background:#ededed; }
-            QPushButton#updateButton { font-size:13px; padding:3px 6px; border-radius:4px; color:#626262; }
+            QPushButton#updateButton { font-size:14px; padding:3px 6px; border-radius:4px; color:#505050; }
             QPushButton#iconButton, QPushButton#pinButton { border:0; padding:0; border-radius:5px; }
             QPushButton#pinButton:checked { background:#ededed; }
             QPushButton#iconButton:focus, QPushButton#pinButton:focus { border:1px solid #818181; }
@@ -784,7 +784,7 @@ def main():
             pin_preserved_window = original_hwnd == int(window.winId()) and original_geometry == window.geometry()
             window.set_always_on_top(original_pin)
             native_frame = window_chrome.frame_report(int(window.winId()))
-            text_report = inspect_text(window.brand_label, window.target_title)
+            text_report = inspect_text(window.brand_label, window.target_title, window.target_detail, window.status, window.bytes_value)
 
 
             report.parent.mkdir(parents=True, exist_ok=True)

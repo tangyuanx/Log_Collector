@@ -15,14 +15,14 @@ def configure_platform_fonts():
 
 def configure_typography(app):
     font = QFont()
-    font.setFamilies(['Times New Roman', 'Nimbus Roman', 'SimHei', '黑体', 'Heiti SC', 'Noto Sans CJK SC'])
+    font.setFamilies(['Times New Roman', 'Nimbus Roman', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'SimHei', '黑体', 'Noto Sans CJK SC'])
     font.setPointSize(11)
     font.setWeight(QFont.Normal)
-    # At 100% DPI Qt 6.8 defaults to full hinting / GDI_CLASSIC for <=16px.
-    # Vertical hinting uses natural metrics; grayscale avoids RGB color fringes.
+    # FreeType full hinting aligns both axes to the physical pixel grid.
+    # Vertical-only hinting left soft side bearings at 1x in v0.1.6.
     font.setStyleStrategy(QFont.ForceOutline | QFont.PreferAntialias |
                           QFont.NoSubpixelAntialias | QFont.ContextFontMerging)
-    font.setHintingPreference(QFont.PreferVerticalHinting)
+    font.setHintingPreference(QFont.PreferFullHinting)
     app.setFont(font)
 
 
@@ -61,6 +61,8 @@ def inspect_text(*labels):
         glyphs = [g for run in runs for g in run.glyphIndexes()]
         results.append({'text': label.text(), 'weight': int(label.font().weight()),
                         'strategy': int(label.font().styleStrategy().value),
+                        'pixel_size': label.font().pixelSize(),
+                        'hinting': label.font().hintingPreference().name,
                         'families_used': sorted({run.rawFont().familyName() for run in runs}),
                         'no_missing_glyphs': bool(glyphs) and all(g != 0 for g in glyphs),
                         'colored_pixels': colored, 'ink_pixels': len(ink),

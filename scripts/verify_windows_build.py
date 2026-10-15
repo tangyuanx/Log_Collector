@@ -95,7 +95,7 @@ with tempfile.TemporaryDirectory(prefix='logcollector-verify-') as tmp:
         for text in typography.get('labels', []):
             if not text['no_missing_glyphs'] or not text['not_clipped'] or text['colored_pixels'] or text['weight'] != 400:
                 raise RuntimeError('Text rendering verification failed: ' + label + ' ' + json.dumps(text))
-        if len(typography.get('labels', [])) != 2:
+        if len(typography.get('labels', [])) != 5:
             raise RuntimeError('Missing text render probes: ' + label)
         preview = typography.pop('preview_png', '')
         if label in ('launcher-normal', 'launcher-dpi125', 'launcher-dpi150'):
