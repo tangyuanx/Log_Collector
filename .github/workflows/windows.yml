@@ -51,6 +51,9 @@ jobs:
         shell: pwsh
         run: ./scripts/build_launcher.ps1
 
+      - name: Prepare Chinese typography test fixture
+        run: python scripts/prepare_typography_fixture.py
+
       - name: Verify frozen EXE startup and runtime contents
         run: python scripts/verify_windows_build.py
 
@@ -78,6 +81,7 @@ jobs:
             dist/LogCollector-Portable.zip
             dist/SHA256SUMS.txt
             dist/startup-verification.json
+            dist/text-*.png
           if-no-files-found: error
 
       # Auto-publish the first Release for a new VERSION, and create its tag.
@@ -103,3 +107,4 @@ jobs:
             --title "Log Collector $env:RELEASE_TAG" `
             @notesArgs
           if ($LASTEXITCODE -ne 0) { throw 'Release publishing failed' }
+

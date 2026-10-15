@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
     QLabel, QPushButton, QFileDialog, QMessageBox, QFrame, QDialog, QStyle, QSizeGrip, QProgressBar)
 import window_chrome
 from ui_icons import icon as ui_icon
+from typography import configure_typography, inspect_text
 from capture import FileCapture
 from session import bind_cursor, discover_logs, validate
 from update import VERSION, check_update, download_and_install
@@ -197,6 +198,7 @@ class Window(QMainWindow):
         self.brand_icon.setAttribute(Qt.WA_TransparentForMouseEvents)
         header_row.addWidget(self.brand_icon)
         title = QLabel('日志采集')
+        self.brand_label = title
         title.setObjectName('brand')
         title.setAttribute(Qt.WA_TransparentForMouseEvents)
         header_row.addWidget(title)
@@ -413,7 +415,7 @@ class Window(QMainWindow):
             QFrame#toolbar { border-bottom:1px solid #d8d8d8; }
             QFrame#titleSeparator { background:#d8d8d8; border:0; }
             QFrame#header QLabel { background:transparent; }
-            QLabel#brand, QLabel#targetTitle { font-size:16px; font-weight:500; }
+            QLabel#brand, QLabel#targetTitle { font-size:16px; font-weight:400; padding:2px 0; }
             QLabel#brandEnglish { font-size:13px; color:#626262; }
             QLabel#secondary { color:#626262; font-size:13px; }
             QLabel#lineValue { font-size:42px; font-weight:400; }
@@ -425,7 +427,7 @@ class Window(QMainWindow):
             QPushButton:hover { background:#ededed; }
             QPushButton:focus { border:1px solid #818181; }
             QPushButton:disabled { background:#f5f5f5; color:#818181; border-color:#e9e9e9; }
-            QPushButton#primary { background:#353535; color:#ffffff; border:0; font-weight:500; font-size:15px; }
+            QPushButton#primary { background:#353535; color:#ffffff; border:0; font-weight:400; font-size:15px; }
             QPushButton#primary:hover { background:#494949; }
             QPushButton#primary:focus { border:1px solid #818181; }
             QPushButton#primary:disabled { background:#f5f5f5; color:#818181; }
@@ -757,10 +759,14 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName('Log Collector')
     app.setWindowIcon(QIcon(str(ICON_PATH)))
-    font = QFont()
-    font.setFamilies(['Times New Roman', 'Nimbus Roman', 'SimHei', '黑体', 'Heiti SC', 'Noto Sans CJK SC'])
-    font.setPointSize(11)
-    app.setFont(font)
+    if len(sys.argv) == 3 and sys.argv[1] == '--startup-check':
+        # CI reproduces the user's legacy SimHei font without redistributing it.
+        fixture = os.environ.get('LOGCOLLECTOR_TEST_FONT')
+        if fixture:
+            from PySide6.QtGui import QFontDatabase
+            if QFontDatabase.addApplicationFont(fixture) < 0:
+                raise RuntimeError('Could not load the typography test font')
+    configure_typography(app)
     window = Window()
     window.show()
     if len(sys.argv) == 3 and sys.argv[1] == '--startup-check':
@@ -777,6 +783,8 @@ def main():
             pin_preserved_window = original_hwnd == int(window.winId()) and original_geometry == window.geometry()
             window.set_always_on_top(original_pin)
             native_frame = window_chrome.frame_report(int(window.winId()))
+            text_report = inspect_text(window.brand_label, window.target_title)
+
 
             report.parent.mkdir(parents=True, exist_ok=True)
             report.write_text(json.dumps({'version': VERSION, 'python': sys.version.split()[0],
@@ -785,6 +793,7 @@ def main():
                 'update_at_top': window.updatebtn.parentWidget() is window.header,
                 'icon_loaded': not window.windowIcon().isNull(),
                 'version_button': window.updatebtn.text(),
+                'typography': text_report,
                 'pin_native_enabled': pinned_native, 'pin_native_disabled': unpinned_native is False,
                 'pin_preserved_window': pin_preserved_window, 'native_frame': native_frame,
                 'ui_icons_loaded': not window.pinbtn.icon().isNull() and not window.helpbtn.icon().isNull(),

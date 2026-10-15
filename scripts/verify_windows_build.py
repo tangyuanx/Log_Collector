@@ -43,6 +43,7 @@ with tempfile.TemporaryDirectory(prefix='logcollector-verify-') as tmp:
     for key in ('PYTHONHOME', 'PYTHONPATH', 'QT_PLUGIN_PATH', 'QT_QPA_PLATFORM_PLUGIN_PATH'):
         env.pop(key, None)
     env['QT_QPA_PLATFORM'] = 'windows'
+    env['LOGCOLLECTOR_TEST_FONT'] = str(Path('build/typography-fixture/simhei.ttf').resolve())
     env['APPDATA'] = str(root / 'isolated-profile')
     env['LOCALAPPDATA'] = str(root / '运行缓存')
     env.pop('LOGCOLLECTOR_LAUNCHER', None)
@@ -52,6 +53,8 @@ with tempfile.TemporaryDirectory(prefix='logcollector-verify-') as tmp:
         ('launcher-no-temp', single, root / 'blocked-temp'),
         ('launcher-repair-cache', single, root / 'repair-temp'),
         ('portable', root / '便携 目录' / 'LogCollector.exe', root / 'portable-temp'),
+        ('launcher-dpi125', single, root / 'dpi125-temp'),
+        ('launcher-dpi150', single, root / 'dpi150-temp'),
     ]
     cases[1][1].parent.mkdir()
     shutil.copy2(single, cases[1][1])
@@ -65,6 +68,7 @@ with tempfile.TemporaryDirectory(prefix='logcollector-verify-') as tmp:
         if label == 'launcher-repair-cache':
             for dll in Path(env['LOCALAPPDATA']).rglob('vcruntime140.dll'):
                 dll.unlink()
+        env['QT_SCALE_FACTOR'] = '1.25' if label.endswith('dpi125') else '1.5' if label.endswith('dpi150') else '1'
         report = root / (label + '.json')
         env['TEMP'] = env['TMP'] = str(tempdir)
         process = subprocess.Popen([str(executable), '--startup-check', str(report)], env=env, cwd=root)
@@ -87,6 +91,17 @@ with tempfile.TemporaryDirectory(prefix='logcollector-verify-') as tmp:
         frame = result.get('native_frame', {})
         if frame.get('window_size') != frame.get('client_size'):
             raise RuntimeError('Unwanted native frame/caption is visible: ' + label + ' ' + json.dumps(frame))
+        typography = result.get('typography', {})
+        for text in typography.get('labels', []):
+            if not text['no_missing_glyphs'] or not text['not_clipped'] or text['colored_pixels'] or text['weight'] != 400:
+                raise RuntimeError('Text rendering verification failed: ' + label + ' ' + json.dumps(text))
+        if len(typography.get('labels', [])) != 2:
+            raise RuntimeError('Missing text render probes: ' + label)
+        preview = typography.pop('preview_png', '')
+        if label in ('launcher-normal', 'launcher-dpi125', 'launcher-dpi150'):
+            import base64
+            Path('dist/text-' + label + '.png').write_bytes(base64.b64decode(preview))
+            print('TEXT_PREVIEW ' + label + ' ' + preview)
         if result.get('version_button') != 'v' + result['version']:
             raise RuntimeError('Version entry missing: ' + label)
         if label.startswith('launcher-'):
