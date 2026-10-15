@@ -14,6 +14,10 @@ if os.name == 'nt':
     user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
                                   ctypes.c_int, ctypes.c_int, wintypes.UINT]
     user32.SetWindowPos.restype = wintypes.BOOL
+    user32.CallWindowProcW.argtypes = [ctypes.c_void_p, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user32.CallWindowProcW.restype = ctypes.c_ssize_t
+    WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+    hooks = {}  # Keep callbacks alive for the lifetime of their native windows.
     user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
     user32.GetWindowRect.restype = wintypes.BOOL
     user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
@@ -42,6 +46,20 @@ if os.name == 'nt':
 def apply_frame(hwnd):
     if os.name != 'nt':
         return
+    # Qt consumes WM_NCCALCSIZE before QWidget.nativeEvent on Windows. Hook the
+    # native procedure so the standard caption is removed before Qt sees it.
+    if hwnd not in hooks:
+        previous = user32.GetWindowLongPtrW(hwnd, -4)
+        @WNDPROC
+        def procedure(window, message, wparam, lparam):
+            result = handle_native(window, message, wparam, lparam)
+            if result is not None:
+                return result
+            if message == 0x0082:  # WM_NCDESTROY: stop intercepting before teardown
+                user32.SetWindowLongPtrW(window, -4, previous)
+            return user32.CallWindowProcW(previous, window, message, wparam, lparam)
+        hooks[hwnd] = (previous, procedure)
+        user32.SetWindowLongPtrW(hwnd, -4, ctypes.cast(procedure, ctypes.c_void_p).value)
     # Retain native resize / maximize / shadow behavior while Qt owns the title.
     style = user32.GetWindowLongPtrW(hwnd, -16)
     user32.SetWindowLongPtrW(hwnd, -16, style | 0x00C00000 | 0x00040000 | 0x00080000 | 0x00030000)
@@ -76,24 +94,23 @@ def frame_report(hwnd):
             'client_size': [client.right, client.bottom], 'topmost': is_topmost(hwnd)}
 
 
-def handle_message(message):
+def handle_native(hwnd, message, wparam, lparam):
     if os.name != 'nt':
         return None
-    msg = wintypes.MSG.from_address(int(message))
-    if msg.message == 0x0083 and msg.wParam:  # WM_NCCALCSIZE: no standard caption / thick rim
-        if user32.IsZoomed(msg.hwnd):
+    if message == 0x0083 and wparam:  # WM_NCCALCSIZE: no standard caption / thick rim
+        if user32.IsZoomed(hwnd):
             info = MonitorInfo()
             info.cbSize = ctypes.sizeof(info)
-            if user32.GetMonitorInfoW(user32.MonitorFromWindow(msg.hwnd, 2), ctypes.byref(info)):
-                rect = wintypes.RECT.from_address(msg.lParam)
+            if user32.GetMonitorInfoW(user32.MonitorFromWindow(hwnd, 2), ctypes.byref(info)):
+                rect = wintypes.RECT.from_address(lparam)
                 rect.left, rect.top, rect.right, rect.bottom = (info.rcWork.left, info.rcWork.top,
                                                               info.rcWork.right, info.rcWork.bottom)
         return 0
-    if msg.message == 0x0084 and not user32.IsZoomed(msg.hwnd):  # WM_NCHITTEST: all eight resize edges
+    if message == 0x0084 and not user32.IsZoomed(hwnd):  # WM_NCHITTEST: all eight resize edges
         rect = wintypes.RECT()
-        user32.GetWindowRect(msg.hwnd, ctypes.byref(rect))
-        x = ctypes.c_short(msg.lParam & 0xffff).value
-        y = ctypes.c_short((msg.lParam >> 16) & 0xffff).value
+        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+        x = ctypes.c_short(lparam & 0xffff).value
+        y = ctypes.c_short((lparam >> 16) & 0xffff).value
         border = 6
         left, right = x < rect.left + border, x >= rect.right - border
         top, bottom = y < rect.top + border, y >= rect.bottom - border

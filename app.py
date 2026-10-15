@@ -500,10 +500,6 @@ class Window(QMainWindow):
         if hasattr(self, 'maxbtn'):
             self.maxbtn.setIcon(ui_icon('restore' if self.isMaximized() else 'maximize'))
 
-    def nativeEvent(self, event_type, message):
-        result = window_chrome.handle_message(message)
-        return (True, result) if result is not None else super().nativeEvent(event_type, message)
-
     @staticmethod
     def load_settings():
         try:
