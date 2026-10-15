@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
     QLabel, QPushButton, QFileDialog, QMessageBox, QFrame, QDialog, QStyle, QSizeGrip, QProgressBar)
 import window_chrome
 from ui_icons import icon as ui_icon
-from typography import configure_typography, inspect_text
+from typography import configure_platform_fonts, configure_typography, inspect_text
 from capture import FileCapture
 from session import bind_cursor, discover_logs, validate
 from update import VERSION, check_update, download_and_install
@@ -756,6 +756,7 @@ def main():
         set_app_id.argtypes = [wintypes.LPCWSTR]
         set_app_id.restype = ctypes.c_long
         set_app_id('Tangyuan.LogCollector')
+    configure_platform_fonts()
     app = QApplication(sys.argv)
     app.setApplicationName('Log Collector')
     app.setWindowIcon(QIcon(str(ICON_PATH)))

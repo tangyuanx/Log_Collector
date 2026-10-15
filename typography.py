@@ -1,5 +1,16 @@
 """Small CJK UI text: native regular outlines, natural metrics and grayscale AA."""
+import os
 from PySide6.QtGui import QFont, QImage, QPainter, QTextLayout, QColor
+
+
+def configure_platform_fonts():
+    # Qt 6.8's DirectWrite fallback still produces LCD color masks for SimHei
+    # despite NoSubpixelAntialias. Use Qt's built-in FreeType backend so all
+    # script runs use the same outline / grayscale policy as the primary font.
+    if os.name == 'nt':
+        platform = os.environ.get('QT_QPA_PLATFORM', 'windows')
+        if platform.split(':', 1)[0] == 'windows' and 'fontengine=' not in platform:
+            os.environ['QT_QPA_PLATFORM'] = platform + (',' if ':' in platform else ':') + 'fontengine=freetype'
 
 
 def configure_typography(app):
@@ -49,6 +60,7 @@ def inspect_text(*labels):
         runs = layout.glyphRuns()
         glyphs = [g for run in runs for g in run.glyphIndexes()]
         results.append({'text': label.text(), 'weight': int(label.font().weight()),
+                        'strategy': int(label.font().styleStrategy().value),
                         'families_used': sorted({run.rawFont().familyName() for run in runs}),
                         'no_missing_glyphs': bool(glyphs) and all(g != 0 for g in glyphs),
                         'colored_pixels': colored, 'ink_pixels': len(ink),
