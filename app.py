@@ -128,7 +128,7 @@ class PickButton(QPushButton):
     def __init__(self, parent=None):
         super().__init__('拖选会话', parent)
         self.picking = False
-        self.setToolTip('按住左键，拖到 MobaXterm 目标会话的终端文字区域后松开；Esc 取消')
+        self.setToolTip('按住左键，拖到 MobaXterm 目标会话页面后松开；显示区、输入区均可；Esc 取消')
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton and self.isEnabled():
@@ -273,7 +273,7 @@ class Window(QMainWindow):
         self.target_title.setTextFormat(Qt.PlainText)
         self.target_title.setWordWrap(True)
         target_text.addWidget(self.target_title)
-        self.target_detail = QLabel('按住“拖选会话”，拖到终端文字区域后松开。')
+        self.target_detail = QLabel('按住“拖选会话”，拖到目标会话页面后松开。')
         self.target_detail.setObjectName('secondary')
         self.target_detail.setTextFormat(Qt.PlainText)
         self.target_detail.setWordWrap(True)
@@ -414,7 +414,7 @@ class Window(QMainWindow):
         help_layout.addWidget(help_title)
         self.help = QLabel('首次使用：在 MobaXterm 的 Settings → Configuration → Terminal 中开启 '
             '“Log terminal output to the following directory”，然后重新连接会话。\n'
-            '之后只需拖选会话、开始采集、停止保存，无需在这里选择原始日志文件。\n'
+            '之后只需拖到目标会话页面（显示区或输入区），开始采集、停止保存，无需选择原始日志文件。\n'
             '自动识别依赖会话日志句柄；若当前版本无法识别，会明确提示，不会猜选其他会话。')
         self.help.setObjectName('help')
         self.help.setWordWrap(True)
@@ -573,7 +573,7 @@ class Window(QMainWindow):
     def picking_changed(self, picking):
         self.pinbtn.setEnabled(not picking)
         if picking:
-            self.status.setText('将指针拖到目标会话的终端文字区域，松开即可绑定；Esc 取消。')
+            self.status.setText('拖到目标会话页面后松开即可绑定，显示区和输入区均可；Esc 取消。')
         else:
             self.status.setText('可以重新选择目标' if self.session else '等待选择目标')
 
@@ -826,4 +826,5 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
+
 

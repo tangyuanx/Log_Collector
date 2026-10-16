@@ -9,6 +9,10 @@ from pathlib import Path
 
 import psutil
 
+WINDOW_ENUM_PROC = getattr(ctypes, 'WINFUNCTYPE', ctypes.CFUNCTYPE)(
+    wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+TERMINAL_CLASSES = ('cmotty', 'putty')
+
 
 class SessionError(RuntimeError):
     pass
@@ -39,6 +43,14 @@ def _native():
         'GetParent': ([wintypes.HWND], wintypes.HWND),
         'GetCursorPos': ([ctypes.POINTER(wintypes.POINT)], wintypes.BOOL),
         'IsWindow': ([wintypes.HWND], wintypes.BOOL),
+        'IsWindowVisible': ([wintypes.HWND], wintypes.BOOL),
+        'IsChild': ([wintypes.HWND, wintypes.HWND], wintypes.BOOL),
+        'GetWindowRect': ([wintypes.HWND, ctypes.POINTER(wintypes.RECT)], wintypes.BOOL),
+        'GetClientRect': ([wintypes.HWND, ctypes.POINTER(wintypes.RECT)], wintypes.BOOL),
+        'ClientToScreen': ([wintypes.HWND, ctypes.POINTER(wintypes.POINT)], wintypes.BOOL),
+        'ScreenToClient': ([wintypes.HWND, ctypes.POINTER(wintypes.POINT)], wintypes.BOOL),
+        'ChildWindowFromPointEx': ([wintypes.HWND, wintypes.POINT, wintypes.UINT], wintypes.HWND),
+        'EnumChildWindows': ([wintypes.HWND, WINDOW_ENUM_PROC, wintypes.LPARAM], wintypes.BOOL),
     }
     for name, (args, result) in signatures.items():
         fn = getattr(user, name)
@@ -58,30 +70,122 @@ def _text(user, hwnd, name):
     return buf.value
 
 
-def bind_handle(hwnd):
-    user = _native()
-    # The native CMoTTY child owns a session's stream. The MobaXterm root
-    # owns multiple sessions and cannot be used as a capture lookup root.
-    for _ in range(16):
-        if not hwnd:
-            break
-        class_name = _text(user, hwnd, 'GetClassNameW')
-        if class_name.casefold() in ('cmotty', 'putty'):
+def _ancestors(user, hwnd, host):
+    result = []
+    while hwnd and hwnd not in result and len(result) < 64:
+        result.append(hwnd)
+        if hwnd == host:
             break
         hwnd = user.GetParent(hwnd)
-    else:
-        hwnd = None
-    if not hwnd or _text(user, hwnd, 'GetClassNameW').casefold() not in ('cmotty', 'putty'):
-        raise SessionError('请拖到 MobaXterm 会话的终端文字区域，不要选择标题栏或标签页。')
-    pid = _pid(user, hwnd)
+    return result
+
+
+def _client_bounds(user, hwnd):
+    rect = wintypes.RECT()
+    if not user.GetClientRect(hwnd, ctypes.byref(rect)):
+        return None
+    start, end = wintypes.POINT(rect.left, rect.top), wintypes.POINT(rect.right, rect.bottom)
+    if not (user.ClientToScreen(hwnd, ctypes.byref(start)) and user.ClientToScreen(hwnd, ctypes.byref(end))):
+        return None
+    return start.x, start.y, end.x, end.y
+
+
+def _contains(bounds, point):
+    return bounds and bounds[0] <= point.x < bounds[2] and bounds[1] <= point.y < bounds[3]
+
+
+def _visible_bounds(user, hwnd, host):
+    if not user.IsWindowVisible(hwnd):
+        return None
+    rect = wintypes.RECT()
+    if not user.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return None
+    bounds = rect.left, rect.top, rect.right, rect.bottom
+    # A visible flag alone does not exclude off-page/clipped terminal controls.
+    for parent in _ancestors(user, user.GetParent(hwnd), host):
+        clip = _client_bounds(user, parent)
+        if not clip:
+            return None
+        bounds = max(bounds[0], clip[0]), max(bounds[1], clip[1]), min(bounds[2], clip[2]), min(bounds[3], clip[3])
+    return bounds if bounds[0] < bounds[2] and bounds[1] < bounds[3] else None
+
+
+def _resolve_terminal(user, hit, host, point):
+    # Keep the direct terminal/child path. Never change an existing binding
+    # when another tab becomes visible or acquires keyboard focus.
+    for hwnd in _ancestors(user, hit, host):
+        if _text(user, hwnd, 'GetClassNameW').casefold() in TERMINAL_CLASSES:
+            return hwnd
+    if point is None or not _contains(_client_bounds(user, host), point):
+        raise SessionError('请拖到要采集的 MobaXterm 会话页面（显示区或输入区）。')
+
+    # WindowFromPoint can skip static/disabled read-only output controls.
+    # Descend the actual page under this same screen point, including those
+    # controls; skip hidden tabs and mouse-transparent overlays only.
+    path = [host]
+    for _ in range(64):
+        local = wintypes.POINT(point.x, point.y)
+        if not user.ScreenToClient(path[-1], ctypes.byref(local)):
+            break
+        child = user.ChildWindowFromPointEx(path[-1], local, 0x0001 | 0x0004)
+        if not child or child in path:
+            break
+        path.append(child)
+    for hwnd in reversed(path):
+        if _text(user, hwnd, 'GetClassNameW').casefold() in TERMINAL_CLASSES:
+            return hwnd
+
+    terminals = {}
+    @WINDOW_ENUM_PROC
+    def collect(hwnd, _):
+        if _text(user, hwnd, 'GetClassNameW').casefold() in TERMINAL_CLASSES:
+            bounds = _visible_bounds(user, hwnd, host)
+            if bounds:
+                terminals[hwnd] = bounds
+        return True
+    user.EnumChildWindows(host, collect, 0)
+
+    # Find a terminal in the most specific page/pane containing the drop.
+    # Serial output and the terminal input may be sibling controls. A unique
+    # visible terminal in their common page is the stable session identity.
+    # Do not promote a sidebar/title-bar drop to the entire MobaXterm host.
+    for page in reversed(path[1:]):
+        candidates = [hwnd for hwnd in terminals if user.IsChild(page, hwnd)]
+        if not candidates:
+            continue
+        under_point = [hwnd for hwnd in candidates if _contains(terminals[hwnd], point)]
+        if len(under_point) == 1:
+            return under_point[0]
+        if len(candidates) == 1 and not under_point:
+            hwnd = candidates[0]
+            bounds = terminals[hwnd]
+            # Exclude adjacent shared navigation/side panels. Vertical space
+            # above a serial input is the intended expanded drop target.
+            if _contains(_client_bounds(user, page), point) and bounds[0] <= point.x < bounds[2]:
+                return hwnd
+            break
+        raise SessionError('此区域包含多个会话，请拖到要采集的具体会话页面内。')
+    raise SessionError('未在此页面识别到独立终端，请拖到要采集的 MobaXterm 会话显示区或输入区。')
+
+
+def bind_handle(hwnd, point=None):
+    user = _native()
+    if not hwnd or not user.IsWindow(hwnd):
+        raise SessionError('未识别到目标窗口，请重新拖选会话页面。')
     host = user.GetAncestor(hwnd, 2)
     host_pid = _pid(user, host)
     try:
-        process, owner = psutil.Process(pid), psutil.Process(host_pid)
-        if process.name().casefold() != 'motty.exe' or not owner.name().casefold().startswith('mobaxterm'):
-            raise SessionError('目前支持 MobaXterm 会话，请选择它的终端文字区域。')
+        owner = psutil.Process(host_pid)
+        if not owner.name().casefold().startswith('mobaxterm'):
+            raise SessionError('目前支持 MobaXterm 会话，请拖到它的会话页面。')
+        hwnd = _resolve_terminal(user, hwnd, host, point)
+        pid = _pid(user, hwnd)
+        class_name = _text(user, hwnd, 'GetClassNameW')
+        process = psutil.Process(pid)
+        if process.name().casefold() != 'motty.exe':
+            raise SessionError('未识别到独立的 MobaXterm 终端，请重新拖选会话页面。')
         if pid == host_pid:
-            raise SessionError('这个窗口不能区分独立会话，请选择具体的终端文字区域。')
+            raise SessionError('这个窗口不能区分独立会话，请选择具体的会话页面。')
         title = _text(user, hwnd, 'GetWindowTextW').strip()
         # Optional display metadata only; IP is never a session identifier.
         peers = set()
@@ -106,7 +210,7 @@ def bind_cursor():
     point = wintypes.POINT()
     if not user.GetCursorPos(ctypes.byref(point)):
         raise SessionError('无法读取指针位置，请重新选择。')
-    return bind_handle(user.WindowFromPoint(point))
+    return bind_handle(user.WindowFromPoint(point), point)
 
 
 def validate(session):
@@ -162,3 +266,4 @@ def discover_logs(session):
     if len(candidates) > 1:
         raise SessionError('该会话同时打开了多个候选日志，无法确定采集来源。当前版本不会自动猜选，请只保留一个会话输出日志后重试。')
     return candidates[0]
+
