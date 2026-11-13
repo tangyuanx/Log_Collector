@@ -6,6 +6,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QContextMenuEvent
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 from app import Window
 from session import Session
@@ -55,12 +58,12 @@ class WindowTests(unittest.TestCase):
             self.window.toggle_capture()
             self.wait_job()
             self.assertTrue(self.window.capture.active)
-            self.assertFalse(self.window.pickbtn.isEnabled())
+            self.assertFalse(self.window.session_picker.isEnabled())
             with source.open('ab') as stream:
                 stream.write(b'new\r\n')
             self.window.stop_capture()
             self.assertEqual(self.window.last_file.read_bytes(), b'new\r\n')
-            self.assertTrue(self.window.pickbtn.isEnabled())
+            self.assertTrue(self.window.session_picker.isEnabled())
             self.assertEqual(self.window.actionbtn.text(), '开始采集')
 
     def test_waiting_and_live_line_count_are_visible(self):
@@ -81,7 +84,76 @@ class WindowTests(unittest.TestCase):
             self.assertNotIn('末行写入中', self.window.status.text())
             self.window.stop_capture()
             self.assertEqual(self.window.line_value.text(), '2')
-            self.assertIn('已保存', self.window.status.text())
+            self.assertEqual(self.window.capture_state.text(), '采集已保存')
+
+    def test_saved_log_click_and_context_menu_copy_the_requested_value(self):
+        source = self.folder / 'session.log'
+        source.write_bytes(b'old')
+        self.window.session = Session(100, 10, 1.0, 'CMoTTY', 200, 20, 0.5, '串口 & COM3')
+        self.window.show()
+        with patch('app.validate'):
+            self.window.begin_capture(source, '')
+        button = self.window.saved_log
+        self.assertFalse(button.isVisible())
+        self.window.stop_capture()
+        self.assertTrue(button.isVisible())
+        target = self.window.last_file
+        clipboard = self.app.clipboard()
+        with patch('app.QToolTip.showText'):
+            QTest.mouseClick(button, Qt.LeftButton)
+            self.assertEqual(clipboard.text(), target.name)
+
+            pos = button.rect().center()
+            QApplication.sendEvent(button, QContextMenuEvent(QContextMenuEvent.Mouse, pos, button.mapToGlobal(pos)))
+            menu = button.copy_menu
+            self.assertTrue(menu.isVisible())
+            path_action, name_action = menu.actions()
+            QTest.mouseClick(menu, Qt.LeftButton, pos=menu.actionGeometry(path_action).center())
+            self.assertEqual(clipboard.text(), str(target))
+            QApplication.sendEvent(button, QContextMenuEvent(QContextMenuEvent.Mouse, pos, button.mapToGlobal(pos)))
+            QTest.mouseClick(menu, Qt.LeftButton, pos=menu.actionGeometry(name_action).center())
+            self.assertEqual(clipboard.text(), target.name)
+
+    def test_output_path_click_copies_full_path_after_directory_change(self):
+        selected = self.folder.joinpath(*(['长路径 & 日志目录'] * 14))
+        with patch('app.QFileDialog.getExistingDirectory', return_value=str(selected)):
+            self.window.choose_output()
+        self.window.show()
+        self.assertIn('…', self.window.output_label.text())
+        with patch('app.QToolTip.showText'):
+            QTest.mouseClick(self.window.output_label, Qt.LeftButton)
+        self.assertEqual(self.app.clipboard().text(), str(selected))
+
+    def test_drag_from_left_session_title_binds_and_escape_cancels(self):
+        source = self.folder / 'session.log'
+        self.window.show()
+        self.app.processEvents()
+        picker = self.window.session_picker
+        title = self.window.target_title
+        title_pos = title.mapTo(picker, title.rect().center())
+        toolbar_pos = picker.mapTo(self.window.toolbar, title_pos)
+        self.assertIs(self.window.toolbar.childAt(toolbar_pos), picker)
+        before = self.window.status.text()
+        with patch('app.bind_cursor', return_value=self.window.session) as bind, \
+                patch('app.discover_logs', return_value=source):
+            QTest.mouseClick(picker, Qt.LeftButton, pos=title_pos)
+            self.assertEqual(self.window.status.text(), before)
+            QTest.mousePress(picker, Qt.LeftButton, pos=title_pos)
+            self.assertTrue(picker.picking)
+            QTest.keyClick(picker, Qt.Key_Escape)
+            QTest.mouseRelease(picker, Qt.LeftButton, pos=QPoint(-20, 20))
+            bind.assert_not_called()
+            self.assertFalse(picker.picking)
+            self.assertEqual(self.window.status.text(), before)
+
+            QTest.mousePress(picker, Qt.LeftButton, pos=title_pos)
+            QTest.mouseMove(picker, pos=QPoint(-20, 20))
+            QTest.mouseRelease(picker, Qt.LeftButton, pos=QPoint(-20, 20))
+            bind.assert_called_once_with()
+            self.wait_job()
+        self.assertFalse(picker.picking)
+        self.assertEqual(self.window.source, source)
+        self.assertTrue(self.window.actionbtn.isEnabled())
 
     def test_closed_target_stops_and_preserves_saved_data(self):
         source = self.folder / 'session.log'
@@ -94,13 +166,14 @@ class WindowTests(unittest.TestCase):
             self.window.read_new_data()
         self.assertFalse(self.window.capture.active)
         self.assertEqual(self.window.last_file.read_bytes(), b'new')
+        self.assertEqual(self.window.saved_log.path, self.window.last_file)
         self.assertFalse(self.window.actionbtn.isEnabled())
         self.assertIn('已关闭', self.window.status.text())
 
     def test_update_worker_is_retained_until_finished(self):
         self.window.run_job(lambda: None, self.window.update_checked)
         self.assertIsNotNone(self.window.worker)
-        self.assertFalse(self.window.pickbtn.isEnabled())
+        self.assertFalse(self.window.session_picker.isEnabled())
         self.wait_job()
         self.assertIn('最新版本', self.window.update_dialog.message.text())
 
@@ -138,7 +211,7 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(dialog.detail.text(), '0.5 / 1.0 MB')
         self.assertIn('下载中断', dialog.message.text())
         self.assertTrue(dialog.upgrade.isEnabled())
-        self.assertTrue(self.window.pickbtn.isEnabled())
+        self.assertTrue(self.window.session_picker.isEnabled())
         dialog.reject()
 
 

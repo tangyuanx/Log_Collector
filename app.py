@@ -5,10 +5,11 @@ import os
 import sys
 import time
 from pathlib import Path
-from PySide6.QtCore import QThread, QTimer, Qt, Signal, QUrl, QSize
-from PySide6.QtGui import QDesktopServices, QFont, QIcon
+from PySide6.QtCore import QThread, QTimer, Qt, Signal, Slot, QUrl, QSize
+from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QFileDialog, QMessageBox, QFrame, QDialog, QStyle, QSizeGrip, QProgressBar)
+    QLabel, QPushButton, QFileDialog, QMessageBox, QFrame, QDialog, QStyle, QSizeGrip, QProgressBar,
+    QMenu, QSizePolicy, QStyleOptionButton, QToolTip)
 import window_chrome
 from ui_icons import icon as ui_icon
 from typography import configure_platform_fonts, configure_typography, inspect_text, inspect_update_dialog
@@ -121,13 +122,15 @@ class UpdateDialog(QDialog):
             self.detail.setText(f'已下载 {done / 1048576:.1f} MB')
 
 
-class PickButton(QPushButton):
+class SessionPicker(QFrame):
     released_at_target = Signal()
     picking_changed = Signal(bool)
 
     def __init__(self, parent=None):
-        super().__init__('拖选会话', parent)
+        super().__init__(parent)
         self.picking = False
+        self.setFocusPolicy(Qt.ClickFocus)
+        self.setAccessibleName('拖选会话')
         self.setToolTip('按住左键，拖到 MobaXterm 目标会话页面后松开；显示区、输入区均可；Esc 取消')
 
     def mousePressEvent(self, event):
@@ -142,23 +145,79 @@ class PickButton(QPushButton):
 
     def mouseReleaseEvent(self, event):
         if self.picking and event.button() == Qt.LeftButton:
-            self.picking = False
-            self.releaseMouse()
-            self.picking_changed.emit(False)
-            # bind_cursor reads the system cursor, including scaled displays.
-            self.released_at_target.emit()
+            self.cancel_pick()
+            if not self.rect().contains(event.position().toPoint()):
+                # bind_cursor reads the system cursor, including scaled displays.
+                self.released_at_target.emit()
             event.accept()
         else:
             super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event):
         if self.picking and event.key() == Qt.Key_Escape:
-            self.picking = False
-            self.releaseMouse()
-            self.picking_changed.emit(False)
+            self.cancel_pick()
             event.accept()
         else:
             super().keyPressEvent(event)
+
+    def cancel_pick(self):
+        if self.picking:
+            self.picking = False
+            self.releaseMouse()
+            self.picking_changed.emit(False)
+
+
+class CopyPathButton(QPushButton):
+    def __init__(self, show_name=False):
+        super().__init__()
+        self.path = None
+        self.show_name = show_name
+        self.setObjectName('copyPath')
+        self.setCursor(Qt.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.copy_menu = QMenu(self)
+        self.copy_menu.addAction('复制绝对路径', self.copy_path)
+        if show_name:
+            self.copy_menu.addAction('仅复制文件名', self.copy_name)
+        self.clicked.connect(self.copy_name if show_name else self.copy_path)
+
+    def set_path(self, path):
+        self.path = path.expanduser().absolute()
+        value = self.path.name if self.show_name else str(self.path)
+        action = '复制文件名' if self.show_name else '复制保存路径'
+        self.setAccessibleName(f'{action}：{value}')
+        hint = '单击复制文件名，右键选择复制内容' if self.show_name else '单击复制保存路径'
+        self.setToolTip(f'{self.path}\n{hint}')
+        self.refresh_text()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.refresh_text()
+
+    def refresh_text(self):
+        if self.path is None:
+            return
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        bounds = self.style().subElementRect(QStyle.SE_PushButtonContents, option, self)
+        text = self.path.name if self.show_name else str(self.path)
+        elided = option.fontMetrics.elidedText(text, Qt.ElideMiddle, bounds.width())
+        self.setText(elided.replace('&', '&&'))
+
+    def contextMenuEvent(self, event):
+        self.copy_menu.popup(event.globalPos())
+
+    def copy_path(self):
+        if self.path is not None:
+            self.copy_text(str(self.path), '已复制绝对路径')
+
+    def copy_name(self):
+        if self.path is not None:
+            self.copy_text(self.path.name, '已复制文件名')
+
+    def copy_text(self, text, confirmation):
+        QApplication.clipboard().setText(text)
+        QToolTip.showText(self.mapToGlobal(self.rect().bottomLeft()), confirmation, self, self.rect(), 1200)
 
 
 class Header(QFrame):
@@ -185,6 +244,7 @@ class Window(QMainWindow):
         self.worker = None
         self.job_callback = None
         self.last_file = None
+        self.status_before_pick = ''
         self.begin_time = 0
         self.setWindowTitle('日志采集 · v' + VERSION)
         self.setWindowIcon(QIcon(str(ICON_PATH)))
@@ -261,29 +321,35 @@ class Window(QMainWindow):
         self.toolbar = QFrame()
         self.toolbar.setObjectName('toolbar')
         toolbar_row = QHBoxLayout(self.toolbar)
-        toolbar_row.setContentsMargins(20, 10, 15, 10)
+        toolbar_row.setContentsMargins(13, 6, 15, 6)
         toolbar_row.setSpacing(12)
+        self.session_picker = SessionPicker()
+        self.session_picker.setObjectName('sessionPicker')
+        self.session_picker.released_at_target.connect(self.pick_target)
+        self.session_picker.picking_changed.connect(self.picking_changed)
+        picker_row = QHBoxLayout(self.session_picker)
+        picker_row.setContentsMargins(7, 4, 7, 4)
+        picker_row.setSpacing(12)
         target_icon = QLabel()
         target_icon.setPixmap(ui_icon('crosshair').pixmap(17, 17))
-        toolbar_row.addWidget(target_icon)
+        target_icon.setAttribute(Qt.WA_TransparentForMouseEvents)
+        picker_row.addWidget(target_icon)
         target_text = QVBoxLayout()
         target_text.setSpacing(3)
         self.target_title = QLabel('尚未选择目标会话')
         self.target_title.setObjectName('targetTitle')
         self.target_title.setTextFormat(Qt.PlainText)
         self.target_title.setWordWrap(True)
+        self.target_title.setAttribute(Qt.WA_TransparentForMouseEvents)
         target_text.addWidget(self.target_title)
-        self.target_detail = QLabel('按住“拖选会话”，拖到目标会话页面后松开。')
+        self.target_detail = QLabel('按住此处，拖到 MobaXterm 目标会话后松开。')
         self.target_detail.setObjectName('secondary')
         self.target_detail.setTextFormat(Qt.PlainText)
         self.target_detail.setWordWrap(True)
+        self.target_detail.setAttribute(Qt.WA_TransparentForMouseEvents)
         target_text.addWidget(self.target_detail)
-        toolbar_row.addLayout(target_text, 1)
-        self.pickbtn = PickButton()
-        self.pickbtn.setObjectName('targetButton')
-        self.pickbtn.released_at_target.connect(self.pick_target)
-        self.pickbtn.picking_changed.connect(self.picking_changed)
-        toolbar_row.addWidget(self.pickbtn)
+        picker_row.addLayout(target_text, 1)
+        toolbar_row.addWidget(self.session_picker, 1)
         divider = QFrame()
         divider.setObjectName('toolbarDivider')
         divider.setFixedSize(1, 20)
@@ -340,6 +406,9 @@ class Window(QMainWindow):
         self.status.setWordWrap(True)
         self.line_value.setToolTip('按文本行统计，CRLF 只计一行；非空末行计一行，继续写入不会重复累计。')
         root.addWidget(self.status)
+        self.saved_log = CopyPathButton(show_name=True)
+        self.saved_log.hide()
+        root.addWidget(self.saved_log)
         root.addStretch()
         self.retrybtn = QPushButton('重新识别日志')
         self.retrybtn.setObjectName('textButton')
@@ -387,9 +456,7 @@ class Window(QMainWindow):
         save_label = QLabel('保存到')
         save_label.setObjectName('secondary')
         save_row.addWidget(save_label)
-        self.output_label = QLabel()
-        self.output_label.setObjectName('secondary')
-        self.output_label.setMinimumWidth(0)
+        self.output_label = CopyPathButton()
         save_row.addWidget(self.output_label, 1)
         self.changebtn = QPushButton('更改')
         self.changebtn.setObjectName('textButton')
@@ -414,7 +481,7 @@ class Window(QMainWindow):
         help_layout.addWidget(help_title)
         self.help = QLabel('首次使用：在 MobaXterm 的 Settings → Configuration → Terminal 中开启 '
             '“Log terminal output to the following directory”，然后重新连接会话。\n'
-            '之后只需拖到目标会话页面（显示区或输入区），开始采集、停止保存，无需选择原始日志文件。\n'
+            '按住主界面左侧的会话区域，拖到目标会话页面（显示区或输入区）后松开，再开始采集。\n'
             '自动识别依赖会话日志句柄；若当前版本无法识别，会明确提示，不会猜选其他会话。')
         self.help.setObjectName('help')
         self.help.setWordWrap(True)
@@ -437,6 +504,9 @@ class Window(QMainWindow):
             QLabel#secondary { color:#505050; font-size:14px; }
             QLabel#lineValue { font-size:42px; font-weight:400; }
             QLabel#captureStatus { font-size:14px; color:#505050; }
+            QFrame#sessionPicker { border-radius:5px; }
+            QFrame#sessionPicker:hover:enabled { background:#f5f5f5; }
+            QFrame#sessionPicker QLabel { background:transparent; }
             QFrame#toolbarDivider { background:#d8d8d8; border:0; }
             QFrame#actionRail { border-left:1px solid #d8d8d8; }
             QFrame#footer { border-top:1px solid #d8d8d8; }
@@ -448,7 +518,10 @@ class Window(QMainWindow):
             QPushButton#primary:hover { background:#494949; }
             QPushButton#primary:focus { border:1px solid #818181; }
             QPushButton#primary:disabled { background:#f5f5f5; color:#818181; }
-            QPushButton#targetButton { font-size:14px; padding:5px 9px; }
+            QPushButton#copyPath { background:transparent; border:1px solid transparent; padding:2px 4px;
+                text-align:left; color:#505050; font-size:14px; }
+            QPushButton#copyPath:hover { background:#ededed; }
+            QPushButton#copyPath:focus { border-color:#818181; }
             QPushButton#textButton { border:0; padding:5px 8px; color:#505050; font-size:14px; }
             QPushButton#textButton:hover { color:#303030; background:#ededed; }
             QPushButton#updateButton { font-size:14px; padding:3px 6px; border-radius:4px; color:#505050; }
@@ -509,11 +582,6 @@ class Window(QMainWindow):
             window_chrome.apply_frame(int(self.winId()))
             self.set_always_on_top(self.always_on_top)
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if hasattr(self, 'output_label'):
-            self.refresh_output_label()
-
     def changeEvent(self, event):
         super().changeEvent(event)
         if hasattr(self, 'maxbtn'):
@@ -535,14 +603,16 @@ class Window(QMainWindow):
             pass
 
     def refresh_output_label(self):
-        full = str(self.output_dir)
-        self.output_label.setToolTip(full)
-        self.output_label.setText(self.output_label.fontMetrics().elidedText(full, Qt.ElideMiddle, max(80, self.width() - 200)))
+        self.output_label.set_path(self.output_dir)
 
     def refresh_controls(self):
         busy = self.worker is not None
         active = self.capture.active
-        self.pickbtn.setEnabled(not active and not busy)
+        can_pick = not active and not busy
+        if not can_pick:
+            self.session_picker.cancel_pick()
+        self.session_picker.setEnabled(can_pick)
+        self.session_picker.setCursor(Qt.OpenHandCursor if can_pick else Qt.ArrowCursor)
         self.changebtn.setEnabled(not active and not busy)
         self.retrybtn.setEnabled(not active and not busy)
         self.updatebtn.setEnabled(not active and not busy)
@@ -561,21 +631,26 @@ class Window(QMainWindow):
         self.refresh_controls()
         self.worker.start()
 
+    @Slot()
     def job_finished(self):
         worker = self.worker
+        # The finished signal can arrive before the native thread finishes cleanup.
+        worker.wait()
         result, error = worker.result
         callback = self.job_callback
         self.worker = self.job_callback = None
-        worker.deleteLater()
+        # Let the last Python reference release the wrapper on the GUI thread.
+        worker.setParent(None)
         callback(result, error)
         self.refresh_controls()
 
     def picking_changed(self, picking):
         self.pinbtn.setEnabled(not picking)
         if picking:
+            self.status_before_pick = self.status.text()
             self.status.setText('拖到目标会话页面后松开即可绑定，显示区和输入区均可；Esc 取消。')
         else:
-            self.status.setText('可以重新选择目标' if self.session else '等待选择目标')
+            self.status.setText(self.status_before_pick)
 
     def pick_target(self):
         # Capture the HWND before a worker runs or the user moves the cursor.
@@ -587,7 +662,7 @@ class Window(QMainWindow):
             return
         self.session, self.source = session, None
         self.target_title.setText('MobaXterm · ' + session.title)
-        self.target_detail.setText(f'已绑定独立会话 · 切换标签页不会改变目标 · 会话 {session.pid}')
+        self.target_detail.setText(f'会话 {session.pid} · 按住此处拖动可重新选择')
         self.run_job(lambda: discover_logs(session), self.logs_ready)
 
     def retry_logs(self):
@@ -637,6 +712,7 @@ class Window(QMainWindow):
             validate(self.session)
             self.begin_time = time.monotonic()
             self.openbtn.hide()
+            self.saved_log.hide()
             self.retrybtn.hide()
             self.refresh_capture_status()
             self.refresh_controls()
@@ -690,13 +766,16 @@ class Window(QMainWindow):
         self.refresh_metrics()
         self.capture_state.setText('采集已停止' if reason else '采集已保存')
         self.openbtn.setVisible(target is not None)
+        if target is not None:
+            self.saved_log.set_path(target)
+        self.saved_log.setVisible(target is not None)
         if reason:
             self.source = None
             self.retrybtn.show()
             self.status.setText(f'采集已停止：{reason}\n已保留 {self.capture.line_count:,} 行日志 · '
-                f'{self.capture.count:,} 字节\n日志文件：{target}')
+                f'{self.capture.count:,} 字节')
         else:
-            self.status.setText('已保存：' + target.name + ('\n本次未收到新增日志' if not self.capture.count else ''))
+            self.status.setText('' if self.capture.count else '本次未收到新增日志')
         self.refresh_controls()
         self.fit_content()
 
@@ -759,8 +838,7 @@ class Window(QMainWindow):
                 event.ignore()
                 return
             self.stop_capture()
-        if self.pickbtn.picking:
-            self.pickbtn.releaseMouse()
+        self.session_picker.cancel_pick()
         self.save_settings()
         super().closeEvent(event)
 
