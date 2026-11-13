@@ -24,6 +24,10 @@ class WindowTests(unittest.TestCase):
         self.folder = Path(self.temp.name)
         self.config_patch = patch('app.CONFIG', self.folder / 'config.json')
         self.config_patch.start()
+        if self.app.platformName() == 'offscreen':
+            # The offscreen plugin returns synthetic window IDs, not Win32 HWNDs.
+            self.enterContext(patch('app.window_chrome.apply_frame'))
+            self.enterContext(patch('app.window_chrome.set_topmost', return_value=True))
         self.window = Window()
         self.window.output_dir = self.folder / 'out'
         self.window.session = Session(100, 10, 1.0, 'CMoTTY', 200, 20, 0.5, 'test')
