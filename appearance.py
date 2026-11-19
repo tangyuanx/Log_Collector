@@ -53,6 +53,7 @@ STYLESHEET = """
     QPushButton#windowClose:hover { background:#e0e0e0; }
     QPushButton#windowControl:focus, QPushButton#windowClose:focus { border:1px solid #808080; }
     QDialog QLabel, QDialog QPushButton, QDialog QProgressBar { font-size:16px; font-weight:400; }
+    QDialog QLabel#secondary { font-size:16px; }
     QDialog QLabel#brand { font-size:16px; }
     QDialog QLabel#dialogTitle { font-size:20px; }
     QDialog QPushButton { min-height:24px; padding:8px 14px; }
