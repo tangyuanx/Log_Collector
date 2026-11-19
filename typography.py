@@ -15,7 +15,7 @@ def configure_platform_fonts():
 
 def configure_typography(app):
     font = QFont()
-    font.setFamilies(['Times New Roman', 'Nimbus Roman', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'SimHei', '黑体', 'Noto Sans CJK SC'])
+    font.setFamilies(['Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'SimHei', '黑体', 'Noto Sans CJK SC'])
     font.setPointSize(11)
     font.setWeight(QFont.Normal)
     # FreeType full hinting aligns both axes to the physical pixel grid.

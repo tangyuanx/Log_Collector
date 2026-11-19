@@ -76,7 +76,7 @@ class WindowTests(unittest.TestCase):
         with patch('app.validate'):
             self.window.begin_capture(source, '')
             self.assertEqual(self.window.line_value.text(), '0')
-            self.assertIn('尚无新增日志', self.window.status.text())
+            self.assertIn('等待日志写入', self.window.status.text())
             with source.open('ab') as stream: stream.write(b'first\r\nsecond')
             self.window.read_new_data()
             self.assertEqual(self.window.line_value.text(), '2')
